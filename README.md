@@ -2,6 +2,7 @@
 Attendance Marking App
 
 To run the app clone the repository and run the main.py file 
+To run a test and populate the name and roll number fields run test_runner.py
 
 
 

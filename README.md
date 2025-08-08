@@ -4,9 +4,9 @@ Attendance Marking App
 To run the app clone the repository and run the main.py file 
 
 
-==================
+
 ATTENDANCE MARKER
-==================
+
 User Guide
 
 This program helps you track student attendance in a simple, automated way. It creates and manages formatted Excel sheets for you.

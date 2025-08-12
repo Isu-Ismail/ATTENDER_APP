@@ -489,6 +489,8 @@ class RollGeneratorDialog(ctk.CTkToplevel):
         except Exception as e:
             messagebox.showerror("Error", f"Invalid input format. Please check your entries.\nDetails: {e}", parent=self)
 
+# In ui_windows.py
+
 class BulkEntryWindow(ctk.CTkToplevel):
     """A window for entering multiple attendance records at once."""
     def __init__(self, master, sheet):
@@ -503,11 +505,9 @@ class BulkEntryWindow(ctk.CTkToplevel):
 
         self.app = master
         self.sheet = sheet
-
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1) # Configure log area to expand
-
-        # --- Instructions and Input Area ---
+        self.grid_rowconfigure(2, weight=1)
+        
         ctk.CTkLabel(self, text="Paste or type attendance data below.", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=20, pady=(20, 5), sticky="w")
         ctk.CTkLabel(self, text="Format: DATE:HOURS:ABSENTEE_ROLLS (e.g., 08-08-2025:2:1,3,5)", text_color="gray").grid(row=1, column=0, padx=20, pady=(0, 10), sticky="w")
         
@@ -517,7 +517,6 @@ class BulkEntryWindow(ctk.CTkToplevel):
         self.process_button = ctk.CTkButton(self, text="Process Bulk Entries", command=self.process_entries)
         self.process_button.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
 
-        # --- Results / Log Area ---
         self.results_textbox = ctk.CTkTextbox(self, corner_radius=8, font=("", 12), state="disabled")
         self.results_textbox.grid(row=4, column=0, padx=20, pady=(5, 20), sticky="nsew")
 
@@ -526,8 +525,28 @@ class BulkEntryWindow(ctk.CTkToplevel):
         self.results_textbox.configure(state="normal")
         self.results_textbox.insert("end", message + "\n")
         self.results_textbox.configure(state="disabled")
-        self.results_textbox.see("end") # Auto-scroll to the bottom
-        self.update_idletasks() # Force UI to update
+        self.results_textbox.see("end")
+        self.update_idletasks()
+
+    def _parse_date(self, date_str):
+        """Tries to parse a date string using multiple common formats."""
+        # A list of date formats to try
+        formats_to_try = [
+            "%d-%m-%Y",  # 08-08-2025
+            "%d/%m/%Y",  # 08/08/2025
+            "%d-%m-%y",  # 08-08-25
+            "%d/%m/%y",  # 08/08/25
+        ]
+        for fmt in formats_to_try:
+            try:
+                # If parsing is successful, return the date formatted in our standard way
+                parsed_date = datetime.strptime(date_str, fmt)
+                return parsed_date.strftime("%d-%m-%Y")
+            except ValueError:
+                continue # Try the next format
+        
+        # If all formats fail, return None
+        return None
 
     def process_entries(self):
         """Validates and processes each line from the input textbox."""
@@ -552,25 +571,25 @@ class BulkEntryWindow(ctk.CTkToplevel):
                     self.log_message("  -> ERROR: Invalid format. Must be DATE:HOURS:ROLLS.")
                     continue
                 
-                date_str, hours_str, rolls_str = [p.strip() for p in parts]
+                date_input, hours_str, rolls_str = [p.strip() for p in parts]
                 
-                # Validate Date
-                datetime.strptime(date_str, "%d-%m-%Y")
+                # --- NEW: Use the smart date parser ---
+                date_str = self._parse_date(date_input)
+                if date_str is None:
+                    self.log_message(f"  -> ERROR: Invalid date format for '{date_input}'.")
+                    continue
                 
-                # Validate Hours
                 num_hours = int(hours_str)
                 if not 1 <= num_hours <= 8:
                     self.log_message("  -> ERROR: Hours must be between 1 and 8.")
                     continue
 
-                # Validate Roll Numbers
                 parsed_rolls = [int(r.strip()) for r in rolls_str.split(',') if r.strip()] if rolls_str else []
                 invalid_rolls = [r for r in parsed_rolls if r > total_students or r < 1]
                 if invalid_rolls:
                     self.log_message(f"  -> ERROR: Invalid Rolls: {invalid_rolls} out of range (1-{total_students}).")
                     continue
                 
-                # Check for existing date and ask to overwrite
                 existing_date_col = None
                 for col in range(4, self.sheet.max_column + 2):
                     if self.sheet.cell(row=2, column=col).value == date_str:
@@ -582,7 +601,6 @@ class BulkEntryWindow(ctk.CTkToplevel):
                         self.log_message(f"  -> SKIPPED: User chose not to overwrite date {date_str}.")
                         continue
 
-                # If all validations pass, call the main mark_attendance function
                 success, message = self.app.mark_attendance(self.sheet, total_students, parsed_rolls, num_hours, date_str, overwrite_col=existing_date_col)
                 self.log_message(f"  -> STATUS: {message}")
 
@@ -591,6 +609,451 @@ class BulkEntryWindow(ctk.CTkToplevel):
         
         self.log_message("\n--- Bulk processing complete! ---")
         self.process_button.configure(state="normal")
+
+    def log_message(self, message):
+        """Adds a message to the results log textbox."""
+        self.results_textbox.configure(state="normal")
+        self.results_textbox.insert("end", message + "\n")
+        self.results_textbox.configure(state="disabled")
+        self.results_textbox.see("end") # Auto-scroll to the bottom
+        self.update_idletasks() # Force UI to update
+
+    def process_entries(self):
+        """Validates and processes each line from the input textbox with detailed logging."""
+        self.process_button.configure(state="disabled")
+        self.results_textbox.configure(state="normal")
+        self.results_textbox.delete("1.0", "end")
+        self.results_textbox.configure(state="disabled")
+
+        self.log_message("--- Starting bulk processing ---")
+        
+        all_lines = self.input_textbox.get("1.0", "end").strip().splitlines()
+        total_students = count_student_rows(self.sheet)
+        
+        for i, line in enumerate(all_lines):
+            line = line.strip()
+            if not line: continue
+
+            self.log_message(f"\nProcessing line {i+1}: '{line}'")
+
+            # 1. Validate the overall format (must have 3 parts separated by ':')
+            parts = line.split(':')
+            if len(parts) != 3:
+                self.log_message("  -> ERROR: Invalid format. Expected DATE:HOURS:ROLLS.")
+                continue
+            
+            date_input, hours_str, rolls_str = [p.strip() for p in parts]
+
+            # 2. Validate the Date
+            date_str = self._parse_date(date_input)
+            if date_str is None:
+                self.log_message(f"  -> ERROR: Invalid date format '{date_input}'. Use DD-MM-YYYY or similar.")
+                continue
+
+            # 3. Validate the Hours
+            try:
+                num_hours = int(hours_str)
+                if not 1 <= num_hours <= 8:
+                    self.log_message(f"  -> ERROR: Hours '{num_hours}' must be between 1 and 8.")
+                    continue
+            except (ValueError, TypeError):
+                self.log_message(f"  -> ERROR: Hours '{hours_str}' is not a valid number.")
+                continue
+
+            # 4. Validate the Roll Numbers
+            try:
+                # Handle the "0" for all present case specifically
+                if rolls_str == "0":
+                    parsed_rolls = []
+                else:
+                    parsed_rolls = [int(r.strip()) for r in rolls_str.split(',') if r.strip()] if rolls_str else []
+                
+                invalid_rolls = [r for r in parsed_rolls if r > total_students or r < 1]
+                if invalid_rolls:
+                    self.log_message(f"  -> ERROR: Invalid Rolls {invalid_rolls} (out of range 1-{total_students}).")
+                    continue
+            except (ValueError, TypeError):
+                self.log_message(f"  -> ERROR: Roll numbers '{rolls_str}' contain non-numeric characters.")
+                continue
+
+            # 5. Check for existing date and ask to overwrite
+            existing_date_col = None
+            for col in range(4, self.sheet.max_column + 2):
+                if self.sheet.cell(row=2, column=col).value == date_str:
+                    existing_date_col = col
+                    break
+            
+            if existing_date_col:
+                if not messagebox.askyesno("Confirm Overwrite", f"An entry for {date_str} (from line {i+1}) already exists.\n\nDo you want to overwrite it?", parent=self):
+                    self.log_message(f"  -> SKIPPED: User chose not to overwrite date {date_str}.")
+                    continue
+
+            # If all validations pass, call the main mark_attendance function
+            success, message = self.app.mark_attendance(self.sheet, total_students, parsed_rolls, num_hours, date_str, overwrite_col=existing_date_col)
+            self.log_message(f"  -> STATUS: {message}")
+        
+        self.log_message("\n--- Bulk processing complete! ---")
+        self.process_button.configure(state="normal")
+
+# Add these three classes to ui_windows.py
+class AddAssessmentDialog(ctk.CTkToplevel):
+    """A dialog to get the name and max marks for a new assessment."""
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Add New Assessment")
+        self.geometry("350x200")
+        self.transient(master)
+        self.focus()
+        self.lift()
+
+        self.result = None
+
+        self.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(self, text="Assessment Name:").grid(row=0, column=0, padx=20, pady=(20,5), sticky="w")
+        self.name_entry = ctk.CTkEntry(self, placeholder_text="e.g., Midterm Exam")
+        self.name_entry.grid(row=0, column=1, padx=20, pady=(20,5), sticky="ew")
+
+        ctk.CTkLabel(self, text="Maximum Marks:").grid(row=1, column=0, padx=20, pady=5, sticky="w")
+        self.marks_entry = ctk.CTkEntry(self, placeholder_text="e.g., 100")
+        self.marks_entry.grid(row=1, column=1, padx=20, pady=5, sticky="ew")
+
+        button_frame = ctk.CTkFrame(self, fg_color="transparent")
+        button_frame.grid(row=2, column=0, columnspan=2, padx=20, pady=20)
+        
+        ok_button = ctk.CTkButton(button_frame, text="OK", command=self.on_ok)
+        ok_button.pack(side="left", padx=10)
+        
+        cancel_button = ctk.CTkButton(button_frame, text="Cancel", command=self.on_cancel)
+        cancel_button.pack(side="left", padx=10)
+        
+        self.name_entry.focus()
+        self.wait_window()
+
+    def on_ok(self):
+        name = self.name_entry.get().strip()
+        max_marks = self.marks_entry.get().strip()
+        if name and max_marks:
+            self.result = (name, max_marks)
+            self.destroy()
+        else:
+            messagebox.showerror("Error", "Both fields are required.", parent=self)
+            
+    def on_cancel(self):
+        self.result = None
+        self.destroy()
+
+class MarkEntryWindow(ctk.CTkToplevel):
+    """The main window for entering and managing student marks."""
+    def __init__(self, master, sheet):
+        super().__init__(master)
+        self.title("Mark Entry and Calculation")
+        self.geometry("600x650")
+        self.transient(master)
+        self.focus()
+        try:
+            self.iconbitmap(resource_path(ICON_PATH))
+        except: pass
+
+        self.app = master
+        self.sheet = sheet
+        self.student_names = self.app.get_student_list(self.sheet)
+        self.entry_widgets = []
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+
+        # --- Top Controls ---
+        top_frame = ctk.CTkFrame(self)
+        top_frame.grid(row=0, column=0, columnspan=2, padx=20, pady=(20,10), sticky="ew")
+        top_frame.grid_columnconfigure(1, weight=1)
+        
+        ctk.CTkLabel(top_frame, text="Select Assessment:", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=10)
+        self.assessment_combo = ctk.CTkComboBox(top_frame, state="readonly", command=self.load_marks_into_grid)
+        self.assessment_combo.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+        add_assessment_btn = ctk.CTkButton(top_frame, text="Add New Assessment...", command=self.add_new_assessment)
+        add_assessment_btn.grid(row=0, column=2, padx=10, pady=10)
+
+        # --- Main Data Entry Grid ---
+        self.grid_frame = ctk.CTkScrollableFrame(self, label_text="Student Marks")
+        self.grid_frame.grid(row=1, column=0, columnspan=2, padx=20, pady=5, sticky="nsew")
+        self.grid_frame.grid_columnconfigure(0, weight=3)
+        self.grid_frame.grid_columnconfigure(1, weight=1)
+        
+        # --- Bulk Entry Section ---
+        bulk_frame = ctk.CTkFrame(self)
+        bulk_frame.grid(row=2, column=0, columnspan=2, padx=20, pady=10, sticky="ew")
+        bulk_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(bulk_frame, text="For Bulk Entry: Paste marks here (one per line) and click Apply.").pack(padx=10, pady=(5,0))
+        self.bulk_textbox = ctk.CTkTextbox(bulk_frame, height=100)
+        self.bulk_textbox.pack(padx=10, pady=5, fill="x", expand=True)
+        apply_bulk_btn = ctk.CTkButton(bulk_frame, text="Apply Bulk Marks to Grid Above", command=self.apply_bulk_marks)
+        apply_bulk_btn.pack(padx=10, pady=(0,10))
+        
+        # --- NEW: Bottom Buttons Frame with all three buttons ---
+        button_frame = ctk.CTkFrame(self)
+        button_frame.grid(row=3, column=0, columnspan=2, padx=20, pady=20, sticky="ew")
+        button_frame.grid_columnconfigure((0, 1, 2), weight=1) # Configure 3 columns
+        
+        save_btn = ctk.CTkButton(button_frame, text="Save All Marks", command=self.save_marks)
+        save_btn.grid(row=0, column=0, padx=5, sticky="ew")
+
+        converter_btn = ctk.CTkButton(button_frame, text="Mark Converter Tool", command=self.open_converter)
+        converter_btn.grid(row=0, column=1, padx=5, sticky="ew")
+
+        calc_btn = ctk.CTkButton(button_frame, text="Calculate Final Result", command=self.open_calculator)
+        calc_btn.grid(row=0, column=2, padx=5, sticky="ew")
+        
+        self.populate_grid()
+        self.refresh_assessments()
+
+    def populate_grid(self):
+        """Creates the student name labels and mark entry boxes."""
+        for i, name in enumerate(self.student_names):
+            label = ctk.CTkLabel(self.grid_frame, text=f"{i+1}. {name}")
+            label.grid(row=i, column=0, padx=10, pady=5, sticky="w")
+            entry = ctk.CTkEntry(self.grid_frame)
+            entry.grid(row=i, column=1, padx=10, pady=5, sticky="ew")
+            self.entry_widgets.append(entry)
+            
+    def refresh_assessments(self):
+        assessments = self.app.get_assessment_list(self.sheet)
+        self.assessment_combo.configure(values=assessments)
+        if assessments:
+            self.assessment_combo.set(assessments[0])
+            self.load_marks_into_grid(assessments[0])
+        else:
+            self.assessment_combo.set("No assessments created yet")
+
+    def load_marks_into_grid(self, assessment_name):
+        """Loads existing marks from the sheet into the individual entry boxes."""
+        marks = self.app.get_marks_for_assessment(self.sheet, assessment_name)
+        for i, entry in enumerate(self.entry_widgets):
+            entry.delete(0, "end")
+            if i < len(marks):
+                entry.insert(0, marks[i])
+    
+    def apply_bulk_marks(self):
+        """Validates and then pastes marks from the bulk textbox into the grid."""
+        # --- 1. Get context: the selected assessment and its max marks ---
+        assessment_name = self.assessment_combo.get()
+        if not assessment_name or "No assessments" in assessment_name:
+            return messagebox.showerror("Error", "Please select an assessment first.", parent=self)
+            
+        max_mark = self.app.get_max_marks(self.sheet, assessment_name)
+        if max_mark is None:
+            return messagebox.showerror("Error", f"Could not determine max marks for '{assessment_name}'.", parent=self)
+
+        # --- 2. Get and validate the raw text data ---
+        marks_list_str = self.bulk_textbox.get("1.0", "end").strip().splitlines()
+        if len(marks_list_str) != len(self.student_names):
+            return messagebox.showerror("Error", f"Data mismatch: There are {len(self.student_names)} students but you pasted {len(marks_list_str)} marks.", parent=self)
+
+        # --- 3. Validate each individual mark BEFORE applying ---
+        for i, mark_str in enumerate(marks_list_str):
+            if not mark_str.strip():
+                continue # Allow empty marks
+            try:
+                mark_int = int(mark_str)
+                if not 0 <= mark_int <= max_mark:
+                    messagebox.showerror("Validation Error", f"Error on line {i+1} of your bulk entry:\n\nMark '{mark_int}' is out of range. It must be between 0 and {max_mark}.", parent=self)
+                    return # Stop the entire process
+            except (ValueError, TypeError):
+                messagebox.showerror("Validation Error", f"Error on line {i+1} of your bulk entry:\n\n'{mark_str}' is not a valid number.", parent=self)
+                return # Stop the entire process
+
+        # --- 4. If all validations pass, apply the marks to the grid ---
+        for i, entry in enumerate(self.entry_widgets):
+            entry.delete(0, "end")
+            if i < len(marks_list_str):
+                entry.insert(0, marks_list_str[i])
+        
+        self.bulk_textbox.delete("1.0", "end")
+        messagebox.showinfo("Success", "Bulk marks applied to the grid. Click 'Save All Marks' to make them permanent.", parent=self)
+        
+    # In ui_windows.py, inside the MarkEntryWindow class
+
+    def open_converter(self):
+        """Opens the Mark Converter dialog."""
+        MarkConverterDialog(self)
+
+    def open_calculator(self):
+        """Opens the Final Result Calculator dialog."""
+        FinalResultDialog(self)
+    
+    def add_new_assessment(self):
+        dialog = AddAssessmentDialog(self)
+        result = dialog.result
+        if result:
+            name, max_marks = result
+            success, message = self.app.add_new_assessment_column(self.sheet, name, max_marks)
+            if success:
+                messagebox.showinfo("Success", message, parent=self)
+                self.refresh_assessments()
+            else:
+                messagebox.showerror("Error", message, parent=self)
+
+    def save_marks(self):
+        assessment_name = self.assessment_combo.get()
+        if not assessment_name or "No assessments" in assessment_name:
+            return messagebox.showerror("Error", "Please select an assessment to save.", parent=self)
+            
+        marks_from_grid = [entry.get().strip() for entry in self.entry_widgets]
+        
+        max_mark = self.app.get_max_marks(self.sheet, assessment_name)
+        if max_mark is None: return messagebox.showerror("Error", "Could not determine max marks.", parent=self)
+
+        validated_marks = []
+        for i, mark_str in enumerate(marks_from_grid):
+            if not mark_str:
+                validated_marks.append(None)
+                continue
+            try:
+                mark_int = int(mark_str)
+                if not 0 <= mark_int <= max_mark:
+                    return messagebox.showerror("Validation Error", f"Error for student {i+1}: Mark '{mark_int}' is invalid. Must be between 0 and {max_mark}.", parent=self)
+                validated_marks.append(mark_int)
+            except (ValueError, TypeError):
+                return messagebox.showerror("Validation Error", f"Error for student {i+1}: '{mark_str}' is not a valid number.", parent=self)
+
+        if not messagebox.askyesno("Confirm Save", f"Save these marks for '{assessment_name}'?\nThis will overwrite any existing data.", parent=self):
+            return
+
+        success, message = self.app.save_marks(self.sheet, assessment_name, validated_marks)
+        messagebox.showinfo("Status", message, parent=self)
+
+# Placeholder classes for future implementation
+class MarkConverterDialog(ctk.CTkToplevel):
+    """A dialog to convert marks from one scale to another."""
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Smart Mark Converter")
+        self.geometry("400x300")
+        self.transient(master)
+        self.focus()
+        self.lift()
+
+        self.mark_entry_window = master
+        self.app = self.mark_entry_window.app
+        self.sheet = self.mark_entry_window.sheet
+        
+        self.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(self, text="Convert Marks", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=2, padx=20, pady=20)
+
+        ctk.CTkLabel(self, text="Select Assessment:").grid(row=1, column=0, padx=20, pady=5, sticky="w")
+        self.assessment_combo = ctk.CTkComboBox(self, state="readonly", values=self.app.get_assessment_list(self.sheet), command=self.on_assessment_select)
+        self.assessment_combo.grid(row=1, column=1, padx=20, pady=5, sticky="ew")
+
+        ctk.CTkLabel(self, text="Marks are currently out of:").grid(row=2, column=0, padx=20, pady=5, sticky="w")
+        self.from_entry = ctk.CTkEntry(self)
+        self.from_entry.grid(row=2, column=1, padx=20, pady=5, sticky="ew")
+
+        ctk.CTkLabel(self, text="Convert to out of:").grid(row=3, column=0, padx=20, pady=5, sticky="w")
+        self.to_entry = ctk.CTkEntry(self, placeholder_text="e.g., 100")
+        self.to_entry.grid(row=3, column=1, padx=20, pady=5, sticky="ew")
+
+        self.convert_button = ctk.CTkButton(self, text="Convert Marks", command=self.convert)
+        self.convert_button.grid(row=4, column=0, columnspan=2, padx=20, pady=20)
+        
+        if self.assessment_combo.get():
+            self.on_assessment_select(self.assessment_combo.get())
+
+    def on_assessment_select(self, assessment_name):
+        """Auto-fills the 'from' entry when an assessment is selected."""
+        max_mark = self.app.get_max_marks(self.sheet, assessment_name)
+        self.from_entry.delete(0, "end")
+        if max_mark is not None:
+            self.from_entry.insert(0, str(max_mark))
+
+    def convert(self):
+        assessment = self.assessment_combo.get()
+        try:
+            from_val = int(self.from_entry.get())
+            to_val = int(self.to_entry.get())
+        except (ValueError, TypeError):
+            return messagebox.showerror("Error", "Please enter valid numbers for the mark scales.", parent=self)
+        
+        if not messagebox.askyesno("Confirm", f"This will permanently convert all marks for '{assessment}' from a scale of {from_val} to {to_val}. This action cannot be undone. Continue?", parent=self):
+            return
+            
+        success, message = self.app.convert_marks(self.sheet, assessment, from_val, to_val)
+        if success:
+            self.mark_entry_window.load_marks_into_grid(assessment) # Refresh the grid
+            messagebox.showinfo("Success", message, parent=self)
+            self.destroy()
+        else:
+            messagebox.showerror("Error", message, parent=self)
+
+class FinalResultDialog(ctk.CTkToplevel):
+    """A dialog to calculate a final weighted result."""
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Final Result Calculator")
+        self.geometry("450x500")
+        self.transient(master)
+        self.focus()
+        self.lift()
+
+        self.mark_entry_window = master
+        self.app = self.mark_entry_window.app
+        self.sheet = self.mark_entry_window.sheet
+        self.weight_entries = {}
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(self, text="Calculate Final Weighted Result", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, padx=20, pady=20)
+
+        scroll_frame = ctk.CTkScrollableFrame(self, label_text="Assign Percentage Weights")
+        scroll_frame.grid(row=1, column=0, padx=20, pady=5, sticky="nsew")
+        scroll_frame.grid_columnconfigure(0, weight=2)
+        scroll_frame.grid_columnconfigure(1, weight=1)
+        
+        for i, assessment in enumerate(self.app.get_assessment_list(self.sheet)):
+            ctk.CTkLabel(scroll_frame, text=assessment).grid(row=i, column=0, padx=10, pady=5, sticky="w")
+            entry = ctk.CTkEntry(scroll_frame, placeholder_text="%")
+            entry.grid(row=i, column=1, padx=10, pady=5, sticky="ew")
+            self.weight_entries[assessment] = entry
+
+        bottom_frame = ctk.CTkFrame(self)
+        bottom_frame.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+        bottom_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(bottom_frame, text="Final Result Column Name:").grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        self.final_col_name_entry = ctk.CTkEntry(bottom_frame, placeholder_text="e.g., Final Grade")
+        self.final_col_name_entry.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
+
+        self.calc_button = ctk.CTkButton(self, text="Calculate and Add to Sheet", command=self.calculate)
+        self.calc_button.grid(row=3, column=0, padx=20, pady=20)
+
+    def calculate(self):
+        weights_dict = {}
+        total_weight = 0
+        try:
+            for assessment, entry in self.weight_entries.items():
+                weight_str = entry.get()
+                if weight_str:
+                    weight = float(weight_str)
+                    weights_dict[assessment] = weight
+                    total_weight += weight
+        except (ValueError, TypeError):
+            return messagebox.showerror("Error", "All weights must be valid numbers.", parent=self)
+            
+        if not messagebox.askyesno("Confirm Weights", f"The total weight assigned is {total_weight}%. Do you want to proceed?", parent=self):
+            return
+
+        final_col_name = self.final_col_name_entry.get().strip()
+        if not final_col_name:
+            return messagebox.showerror("Error", "Please provide a name for the final result column.", parent=self)
+
+        success, message = self.app.calculate_final_result(self.sheet, weights_dict, final_col_name)
+        if success:
+            self.mark_entry_window.refresh_assessments() # Refresh main mark window
+            messagebox.showinfo("Success", message, parent=self)
+            self.destroy()
+        else:
+            messagebox.showerror("Error", message, parent=self)
+        # ... UI and logic for the calculator ...
 # #class LoadingWindow(ctk.CTkToplevel):
 #     """A simple splash screen that shows while the main app is loading."""
 #     # In ui_windows.py, inside the LoadingWindow class

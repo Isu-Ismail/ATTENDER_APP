@@ -10,7 +10,7 @@ from tkinter import messagebox
 # Import from our new custom modules
 from config import ICON_PATH, USER_DATA_PATH, resource_path
 from excel_helpers import count_student_rows
-from ui_windows import LowAttendanceWindow, ManageWindow, DetailedReportWindow,BulkEntryWindow
+from ui_windows import LowAttendanceWindow, ManageWindow, DetailedReportWindow,BulkEntryWindow, MarkEntryWindow
 
 # --- Main Application Class ---
 class AttendanceApp(ctk.CTk):
@@ -24,7 +24,7 @@ class AttendanceApp(ctk.CTk):
         
         # All setup code now runs directly here
         self.title("Attendance Marker")
-        self.geometry("500x650")
+        self.geometry("500x700")
         self.resizable(False, False)
         try:
             self.iconbitmap(resource_path(ICON_PATH))
@@ -79,31 +79,34 @@ class AttendanceApp(ctk.CTk):
 
         # In the setup_ui function of AttendanceApp:
 
+        # In setup_ui of AttendanceApp:
         self.submit_button = ctk.CTkButton(self, text="Mark Attendance", command=self.validate_and_submit)
         self.submit_button.grid(row=2, column=0, padx=20, pady=(10, 5), sticky="ew")
         
-        # Reorganized frame for tool buttons
-        tools_frame = ctk.CTkFrame(self, fg_color="transparent")
-        tools_frame.grid(row=3, column=0, padx=20, pady=5, sticky="ew")
-        tools_frame.grid_columnconfigure((0,1,2), weight=1)
-        
-        self.report_button = ctk.CTkButton(tools_frame, text="Low Attendance", fg_color="#D35400", hover_color="#E67E22", command=self.open_low_attendance_window)
+        # Two rows of tool buttons for a cleaner layout
+        tools_frame1 = ctk.CTkFrame(self, fg_color="transparent")
+        tools_frame1.grid(row=3, column=0, padx=20, pady=(5,0), sticky="ew")
+        tools_frame1.grid_columnconfigure((0,1), weight=1)
+
+        self.report_button = ctk.CTkButton(tools_frame1, text="Low Attendance", fg_color="#D35400", hover_color="#E67E22", command=self.open_low_attendance_window)
         self.report_button.grid(row=0, column=0, padx=(0,5), sticky="ew")
+        self.detailed_report_button = ctk.CTkButton(tools_frame1, text="Detailed Report", command=self.open_detailed_report_window)
+        self.detailed_report_button.grid(row=0, column=1, padx=(5,0), sticky="ew")
         
-        self.detailed_report_button = ctk.CTkButton(tools_frame, text="Detailed Report", command=self.open_detailed_report_window)
-        self.detailed_report_button.grid(row=0, column=1, padx=5, sticky="ew")
+        tools_frame2 = ctk.CTkFrame(self, fg_color="transparent")
+        tools_frame2.grid(row=4, column=0, padx=20, pady=5, sticky="ew")
+        tools_frame2.grid_columnconfigure((0,1), weight=1)
 
-        # New "Bulk Entry" button
-        self.bulk_entry_button = ctk.CTkButton(tools_frame, text="Bulk Entry", command=self.open_bulk_entry_window)
-        self.bulk_entry_button.grid(row=0, column=2, padx=(5,0), sticky="ew")
-
-        # Manage button now on its own row
+        self.bulk_entry_button = ctk.CTkButton(tools_frame2, text="Bulk Entry", command=self.open_bulk_entry_window)
+        self.bulk_entry_button.grid(row=0, column=0, padx=(0,5), sticky="ew")
+        self.mark_entry_button = ctk.CTkButton(tools_frame2, text="Mark Entry", command=self.open_mark_entry_window)
+        self.mark_entry_button.grid(row=0, column=1, padx=(5,0), sticky="ew")
+        
         self.manage_button = ctk.CTkButton(self, text="Manage Subjects & Students", command=self.open_manage_window)
-        self.manage_button.grid(row=4, column=0, padx=20, pady=5, sticky="ew")
+        self.manage_button.grid(row=5, column=0, padx=20, pady=5, sticky="ew")
 
-        # Status frame at the bottom
         self.status_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.status_frame.grid(row=5, column=0, padx=20, pady=(10, 10), sticky="ew")
+        self.status_frame.grid(row=6, column=0, padx=20, pady=(10, 10), sticky="ew")
         self.status_label = ctk.CTkLabel(self.status_frame, text="", wraplength=450)
         self.status_label.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -121,6 +124,111 @@ class AttendanceApp(ctk.CTk):
             self.bulk_win = BulkEntryWindow(self, sheet)
         except Exception as e:
             self.show_status(f"Could not open Bulk Entry window: {e}", is_error=True)
+
+    def get_student_list(self, sheet):
+        """Gets a list of all student names from the sheet."""
+        return [str(sheet.cell(row=row, column=2).value) for row in range(5, count_student_rows(sheet) + 5) if sheet.cell(row=row, column=2).value]
+
+    def _find_percentage_col(self, sheet):
+        """Helper to find the last PERCENTAGE column."""
+        for col in range(sheet.max_column, 3, -1):
+            if sheet.cell(row=4, column=col).value == "PERCENTAGE":
+                return col
+        return None
+
+    def get_assessment_list(self, sheet):
+        """Finds all unique assessment columns for the given sheet."""
+        assessments = []
+        # Find the column where the attendance summary ends
+        perc_col = self._find_percentage_col(sheet)
+        if not perc_col:
+            # If no summary exists yet, there can be no assessments
+            return []
+
+        # Assessments are in row 4, in columns to the right of the percentage column
+        # A valid assessment has both a name (row 4) and a max mark entry (row 3)
+        for col in range(perc_col + 1, sheet.max_column + 2):
+            header = sheet.cell(row=4, column=col).value
+            max_mark_header = sheet.cell(row=3, column=col).value
+            
+            if header and max_mark_header:
+                assessments.append(header.strip())
+        
+        # Return a list of unique assessment names to prevent any duplicates from appearing
+        return sorted(list(set(assessments)))
+
+    def get_marks_for_assessment(self, sheet, assessment_name):
+        """Gets a list of marks for a given assessment column."""
+        col_idx = None
+        for col in range(1, sheet.max_column + 1):
+            if sheet.cell(row=4, column=col).value == assessment_name:
+                col_idx = col
+                break
+        if not col_idx: return []
+        
+        num_students = count_student_rows(sheet)
+        return [str(sheet.cell(row, col_idx).value or '') for row in range(5, num_students + 5)]
+
+    def add_new_assessment_column(self, sheet, name, max_marks):
+        """Adds a new column for an assessment and removes any old final result column."""
+        try:
+            int(max_marks)
+        except (ValueError, TypeError):
+            return False, "Maximum Marks must be a number."
+
+        # --- Find and delete any existing final result column ---
+        perc_col = self._find_percentage_col(sheet)
+        if perc_col:
+            for col in range(perc_col + 1, sheet.max_column + 1):
+                if sheet.cell(row=4, column=col).value and not sheet.cell(row=3, column=col).value:
+                    if messagebox.askyesno("Update Detected", "An old 'Final Marks' column was found. It is now outdated and will be removed.\n\nYou will need to run the calculator again after entering marks.\n\nProceed?"):
+                        sheet.delete_cols(col)
+                        break
+                    else:
+                        return False, "Operation cancelled by user."
+
+        # --- FIX: Precisely find the next empty column after the last data column ---
+        new_col = sheet.max_column + 1
+        
+        sheet.cell(row=3, column=new_col).value = f"Out of: {max_marks}"
+        sheet.cell(row=4, column=new_col).value = name.upper()
+        
+        header_font = Font(bold=True, name='Calibri', color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        sheet.cell(row=4, column=new_col).font = header_font
+        sheet.cell(row=4, column=new_col).fill = header_fill
+
+        self.apply_standard_styles(sheet, count_student_rows(sheet))
+        self.wb.save(os.path.join(USER_DATA_PATH, self.current_filename))
+        return True, f"Assessment '{name}' added successfully."
+
+    def save_marks(self, sheet, assessment_name, marks_list):
+        """Saves a list of integer marks to the specified assessment column."""
+        col_idx = None
+        for col in range(1, sheet.max_column + 1):
+            if sheet.cell(row=4, column=col).value == assessment_name:
+                col_idx = col
+                break
+        if not col_idx: return False, "Could not find the assessment column."
+
+        try:
+            for i, mark in enumerate(marks_list):
+                sheet.cell(row=i + 5, column=col_idx).value = mark
+            
+            self.wb.save(os.path.join(USER_DATA_PATH, self.current_filename))
+            return True, f"Marks for '{assessment_name}' saved successfully."
+        except Exception as e:
+            return False, f"An error occurred while saving: {e}"
+
+    def get_max_marks(self, sheet, assessment_name):
+        """Finds the 'Out of: XX' value for a given assessment."""
+        for col in range(1, sheet.max_column + 1):
+            if sheet.cell(row=4, column=col).value == assessment_name:
+                max_mark_str = str(sheet.cell(row=3, column=col).value or '').replace('Out of: ', '')
+                try:
+                    return int(max_mark_str)
+                except: return None
+        return None
     
     def get_all_dates_from_sheet(self, sheet):
         """Gets a list of all unique attendance dates from the sheet."""
@@ -131,7 +239,7 @@ class AttendanceApp(ctk.CTk):
                 if date_val not in dates:
                     dates.append(date_val)
         return dates
-
+    
     def clear_file_combo_placeholder(self, event):
         if self.file_combo.get() == "Select a file or type a new name":
             self.file_combo.set("")
@@ -178,18 +286,85 @@ class AttendanceApp(ctk.CTk):
         except Exception as e:
             self.show_status(f"Could not open file: {e}", is_error=True)
 
+    def convert_marks(self, sheet, assessment_name, current_max, new_max):
+        """Converts all marks in a column from one scale to another."""
+        col_idx = None
+        for col in range(1, sheet.max_column + 1):
+            if sheet.cell(row=4, column=col).value == assessment_name:
+                col_idx = col
+                break
+        if not col_idx: return False, "Could not find assessment column."
+        
+        try:
+            num_students = count_student_rows(sheet)
+            for row in range(5, num_students + 5):
+                cell = sheet.cell(row=row, column=col_idx)
+                if cell.value is not None:
+                    old_mark = int(cell.value)
+                    # Perform conversion and round to nearest whole number
+                    new_mark = round((old_mark / current_max) * new_max)
+                    cell.value = new_mark
+            
+            # Update the max mark header
+            sheet.cell(row=3, column=col_idx).value = f"Out of: {new_max}"
+            self.wb.save(os.path.join(USER_DATA_PATH, self.current_filename))
+            return True, "Marks converted successfully."
+        except Exception as e:
+            return False, f"An error occurred during conversion: {e}"
+
+    def calculate_final_result(self, sheet, weights_dict, final_col_name):
+        """Calculates a weighted final score and adds it to a new, styled column."""
+        try:
+            assessment_data = {}
+            for name in weights_dict.keys():
+                max_mark = self.get_max_marks(sheet, name)
+                col_idx = [c for c in range(1, sheet.max_column + 1) if sheet.cell(row=4, column=c).value == name][0]
+                if max_mark is None or col_idx is None:
+                    return False, f"Could not find data for assessment '{name}'."
+                assessment_data[name] = {'col': col_idx, 'max': max_mark}
+
+            # --- FIX: Precisely find the column after the last assessment ---
+            last_assessment_col = 0
+            for col in range(1, sheet.max_column + 2):
+                if sheet.cell(row=4, column=col).value:
+                    last_assessment_col = col
+            new_col_idx = last_assessment_col + 1
+
+            final_header_cell = sheet.cell(row=4, column=new_col_idx)
+            final_header_cell.value = final_col_name.upper()
+            
+            header_font = Font(bold=True, name='Calibri', color="FFFFFF")
+            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+            final_header_cell.font = header_font
+            final_header_cell.fill = header_fill
+            
+            num_students = count_student_rows(sheet)
+            for row in range(5, num_students + 5):
+                final_score = 0.0
+                for name, weight in weights_dict.items():
+                    data = assessment_data[name]
+                    student_mark = sheet.cell(row=row, column=data['col']).value or 0
+                    contribution = (float(student_mark) / data['max']) * weight
+                    final_score += contribution
+                sheet.cell(row=row, column=new_col_idx).value = f"{final_score:.2f}"
+            
+            self.apply_standard_styles(sheet, num_students)
+            self.wb.save(os.path.join(USER_DATA_PATH, self.current_filename))
+            return True, "Final result calculated successfully."
+        except Exception as e:
+            return False, f"An error occurred during calculation: {e}"
+
     def show_status(self, message, is_error=False):
         colors = ("#D5E8D4", "#2E4B2E", "#1E601E", "#90EE90", "✅") if not is_error else ("#FFD2D2", "#5E2D2D", "#C00000", "#FF8282", "❌")
         self.status_frame.configure(fg_color=(colors[0], colors[1]))
         self.status_label.configure(text=f"{colors[4]} {message}", text_color=(colors[2], colors[3]))
-        self.status_frame.grid(row=5, column=0, padx=20, pady=(10, 10), sticky="ew")
+        self.status_frame.grid(row=6, column=0, padx=20, pady=(10, 10), sticky="ew")
         
     def set_main_controls_state(self, state="normal", allow_manage=False):
-        # Add self.bulk_entry_button to this list
-        widgets = [self.subject_combo, self.date_entry, self.hours_entry, self.rolls_entry, self.submit_button, self.report_button, self.detailed_report_button, self.bulk_entry_button, self.absent_btn, self.present_btn]
+        widgets = [self.subject_combo, self.date_entry, self.hours_entry, self.rolls_entry, self.submit_button, self.report_button, self.detailed_report_button, self.bulk_entry_button, self.mark_entry_button, self.absent_btn, self.present_btn]
         for widget in widgets: widget.configure(state=state)
         self.manage_button.configure(state="normal" if state == "normal" or allow_manage else "disabled")
-
+    
     def open_manage_window(self):
         if not self.current_filename: return self.show_status("Please load or name a file first.", is_error=True)
         if self.manage_win and self.manage_win.winfo_exists(): return self.manage_win.focus()
@@ -253,9 +428,22 @@ class AttendanceApp(ctk.CTk):
         for row_idx in range(5, num_students + 5):
             sheet.cell(row=row_idx, column=2).alignment = left_align # Names left-aligned
 
-    def get_student_list(self, sheet):
-        """Gets a list of all student names from the sheet."""
-        return [str(sheet.cell(row=row, column=2).value) for row in range(5, count_student_rows(sheet) + 5) if sheet.cell(row=row, column=2).value]
+    
+
+    def open_mark_entry_window(self):
+        """Opens the new mark entry window."""
+        self.hide_status()
+        if not self.wb: return self.show_status("No file loaded.", is_error=True)
+        subject_name = self.subject_combo.get()
+        if not subject_name: return self.show_status("Please select a subject first.", is_error=True)
+        
+        if hasattr(self, 'mark_win') and self.mark_win.winfo_exists():
+            return self.mark_win.focus()
+        try:
+            sheet = self.wb[subject_name]
+            self.mark_win = MarkEntryWindow(self, sheet)
+        except Exception as e:
+            self.show_status(f"Could not open Mark Entry window: {e}", is_error=True)
 
     def get_report_by_date(self, sheet, dates_list):
         """Generates a summary of attendance for a list of dates."""
@@ -291,29 +479,38 @@ class AttendanceApp(ctk.CTk):
         return report_lines
 
     def get_report_by_name(self, sheet, names_list):
-        """Generates a summary of overall attendance for a list of students."""
+        """Generates a summary including attendance and marks."""
+        # ... (Existing logic to get attendance summary is the same)
         summary_cols = {}
-        for col in range(sheet.max_column, 3, -1):
-            header = sheet.cell(row=4, column=col).value
-            if header in ["HOURS PRESENT", "HOURS ABSENT", "PERCENTAGE"]:
-                summary_cols[header] = col
+        perc_col = self._find_percentage_col(sheet)
+        if perc_col:
+            summary_cols["PERCENTAGE"] = perc_col
+            summary_cols["HOURS ABSENT"] = perc_col - 1
+            summary_cols["HOURS PRESENT"] = perc_col - 2
         
-        if len(summary_cols) < 3:
-            return ["Error: Could not find summary columns in the sheet."]
-
         name_to_row = {str(sheet.cell(row, 2).value).upper(): row for row in range(5, count_student_rows(sheet) + 5)}
         
         report_lines = []
         for name in names_list:
             row_num = name_to_row.get(name.upper())
             if row_num:
-                hp = sheet.cell(row=row_num, column=summary_cols["HOURS PRESENT"]).value
-                ha = sheet.cell(row=row_num, column=summary_cols["HOURS ABSENT"]).value
-                perc = sheet.cell(row=row_num, column=summary_cols["PERCENTAGE"]).value
+                line = f"{name}: In subject ({sheet.title})"
+                if summary_cols:
+                    hp = sheet.cell(row=row_num, column=summary_cols["HOURS PRESENT"]).value
+                    ha = sheet.cell(row=row_num, column=summary_cols["HOURS ABSENT"]).value
+                    perc = sheet.cell(row=row_num, column=summary_cols["PERCENTAGE"]).value
+                    line += f"\n  - Hours Present: {hp}\n  - Hours Absent: {ha}\n  - Percentage: {perc}%"
                 
-                # --- THIS LINE IS THE FIX ---
-                # It now includes the sheet title in the formatted string
-                report_lines.append(f"{name}: In subject ({sheet.title})\n  - Hours Present: {hp}\n  - Hours Absent: {ha}\n  - Percentage: {perc}%")
+                assessments = self.get_assessment_list(sheet)
+                if assessments:
+                    line += "\n  --- Marks ---"
+                    for assessment_name in assessments:
+                        col_idx = [c for c in range(1, sheet.max_column + 1) if sheet.cell(row=4, column=c).value == assessment_name][0]
+                        mark = sheet.cell(row=row_num, column=col_idx).value
+                        max_mark = str(sheet.cell(row=3, column=col_idx).value or '').replace('Out of: ','')
+                        if mark is not None:
+                            line += f"\n  - {assessment_name}: {mark}/{max_mark}"
+                report_lines.append(line)
             else:
                 report_lines.append(f"{name}:\n  - STUDENT NOT FOUND")
         return report_lines

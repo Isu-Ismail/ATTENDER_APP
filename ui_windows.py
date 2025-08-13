@@ -479,8 +479,6 @@ class DetailedReportWindow(ctk.CTkToplevel):
             self.summary_checklist_frame.pack(padx=10, pady=5, fill="both", expand=True)
             self.summary_toggle_button.configure(text="Hide Student List")
 
-    
-
 class RollGeneratorDialog(ctk.CTkToplevel):
     """A dialog for generating complex roll numbers based on rules."""
     def __init__(self, master):
@@ -544,7 +542,6 @@ class RollGeneratorDialog(ctk.CTkToplevel):
             messagebox.showerror("Error", f"Invalid input format. Please check your entries.\nDetails: {e}", parent=self)
 
 # In ui_windows.py
-
 class BulkEntryWindow(ctk.CTkToplevel):
     """A window for entering multiple attendance records at once."""
     def __init__(self, master, sheet):

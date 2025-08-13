@@ -170,29 +170,37 @@ class AttendanceApp(ctk.CTk):
         return [str(sheet.cell(row, col_idx).value or '') for row in range(5, num_students + 5)]
 
     def add_new_assessment_column(self, sheet, name, max_marks):
-        """Adds a new column for an assessment and removes any old final result column."""
+        """Adds a new column for an assessment, with validation for duplicates and outdated final results."""
         try:
             int(max_marks)
         except (ValueError, TypeError):
             return False, "Maximum Marks must be a number."
 
-        # --- Find and delete any existing final result column ---
+        # --- NEW: 1. Validate for duplicate assessment name ---
+        new_name_upper = name.strip().upper()
+        existing_assessments = [a.upper() for a in self.get_assessment_list(sheet)]
+        if new_name_upper in existing_assessments:
+            return False, f"An assessment named '{name}' already exists. Please use a new name."
+
+        # --- NEW: 2. Find and delete any existing final result column ---
         perc_col = self._find_percentage_col(sheet)
         if perc_col:
-            for col in range(perc_col + 1, sheet.max_column + 1):
+            # Scan backwards from the end of the sheet
+            for col in range(sheet.max_column, perc_col, -1):
+                # A final result column is one with a header in row 4 but no "Out of:" in row 3
                 if sheet.cell(row=4, column=col).value and not sheet.cell(row=3, column=col).value:
-                    if messagebox.askyesno("Update Detected", "An old 'Final Marks' column was found. It is now outdated and will be removed.\n\nYou will need to run the calculator again after entering marks.\n\nProceed?"):
+                    if messagebox.askyesno("Update Detected", "An old 'Final Marks' column was found. It is now outdated and will be removed.\n\nYou will need to run the calculator again after entering marks for this new assessment.\n\nProceed?"):
                         sheet.delete_cols(col)
-                        break
+                        break # Assume only one final marks column exists and stop searching
                     else:
                         return False, "Operation cancelled by user."
-
-        # --- FIX: Precisely find the next empty column after the last data column ---
-        new_col = sheet.max_column + 1
         
+        # Find the next empty column after the last piece of data
+        new_col = self._find_true_last_column(sheet) + 1
+        
+        # Write headers and styles
         sheet.cell(row=3, column=new_col).value = f"Out of: {max_marks}"
         sheet.cell(row=4, column=new_col).value = name.upper()
-        
         header_font = Font(bold=True, name='Calibri', color="FFFFFF")
         header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
         sheet.cell(row=4, column=new_col).font = header_font
@@ -402,33 +410,58 @@ class AttendanceApp(ctk.CTk):
         # Call the central styling function to apply initial formatting
         self.apply_standard_styles(sheet, 0)
 
+    
     def apply_standard_styles(self, sheet, num_students):
-        """Applies styles and column widths, including the new Column C."""
+        """Applies all standard styling: alignment, borders, and column widths."""
         center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
         left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
         thin_side = Side(border_style="thin", color="000000")
         full_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
+        # Use the reliable tracker function to find the last real data column
+        true_last_col = self._find_true_last_column(sheet)
+        
+        # --- THIS IS THE FIX ---
+        # Define the formatting limit as 5 columns past the last real data
+        format_limit_col = true_last_col + 5
+
         # Set column widths
         sheet.column_dimensions['A'].width = 10
         sheet.column_dimensions['B'].width = 35
-        sheet.column_dimensions['C'].width = 15 # Adjusted width for new Roll Number column
-        if sheet.max_column > 3:
-            for col_idx in range(4, sheet.max_column + 1):
+        sheet.column_dimensions['C'].width = 15
+        if true_last_col > 3:
+            for col_idx in range(4, true_last_col + 1):
                 col_letter = get_column_letter(col_idx)
                 sheet.column_dimensions[col_letter].width = 15
 
-        # Apply borders and alignment
+        # Apply borders and alignment only up to the defined limit
         for row_idx in range(1, num_students + 5):
-            for col_idx in range(1, sheet.max_column + 1):
+            for col_idx in range(1, format_limit_col + 1):
                 cell = sheet.cell(row=row_idx, column=col_idx)
                 cell.border = full_border
                 cell.alignment = center_align
         
+        # Re-apply specific left-alignment for the student names
         for row_idx in range(5, num_students + 5):
-            sheet.cell(row=row_idx, column=2).alignment = left_align # Names left-aligned
+            sheet.cell(row=row_idx, column=2).alignment = left_align
+ 
+    def _find_true_last_column(self, sheet):
+            """
+            Calculates the last column that contains actual header data by scanning backwards.
+            This is the most robust way to find the true edge of the data, ignoring gaps.
+            """
+            # Scan the main header rows (1, 3, and 4) backwards from a high column number
+            for col in range(256, 3, -1): # Scans from column 'IV' leftwards to 'D'
+                # Check for any value in the key header rows
+                if (sheet.cell(row=1, column=col).value or
+                    sheet.cell(row=3, column=col).value or
+                    sheet.cell(row=4, column=col).value):
+                    # Return the column index as soon as any data is found
+                    return col
+            
+            # If no data is found beyond column C, return C as the last column.
+            return 3
 
-    
 
     def open_mark_entry_window(self):
         """Opens the new mark entry window."""
@@ -628,38 +661,51 @@ class AttendanceApp(ctk.CTk):
             if success: [w.delete(0, ctk.END) for w in [self.rolls_entry, self.hours_entry]]
 
     def mark_attendance(self, sheet, total_students, absent_list, num_hours, attendance_date, overwrite_col=None):
-        """Marks or overwrites attendance and updates the dynamic summary."""
+        """
+        Marks attendance using a "cut and paste" method for assessments to preserve data.
+        """
         try:
+            # --- 1. Define Styles ---
             green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
             red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
             no_fill = PatternFill(fill_type=None)
+            header_font = Font(bold=True, name='Calibri', color="FFFFFF")
+            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
 
-            # --- 1. Find and DELETE the old summary block first ---
-            old_summary_start_col = None
-            for col in range(sheet.max_column, 3, -1):
-                if sheet.cell(row=4, column=col).value == "HOURS PRESENT":
-                    old_summary_start_col = col
-                    break
-            
+            # --- 2. "CUT": Read and store all existing assessment data in memory ---
+            assessment_data = []
+            perc_col = self._find_percentage_col(sheet)
+            if perc_col:
+                for col in range(perc_col + 1, sheet.max_column + 2):
+                    header = sheet.cell(row=4, column=col).value
+                    max_mark_header = sheet.cell(row=3, column=col).value
+                    if header and max_mark_header:
+                        marks = [sheet.cell(row=r, column=col).value for r in range(5, total_students + 5)]
+                        assessment_data.append({
+                            "name": header,
+                            "max_marks_header": max_mark_header,
+                            "marks": marks
+                        })
+
+            # --- 3. DELETE: Find and clear the old summary and assessment blocks ---
+            old_summary_start_col = self._find_percentage_col(sheet)
             if old_summary_start_col:
-                for col_to_clear in range(old_summary_start_col - 2, old_summary_start_col + 5):
+                old_summary_start_col -= 2 # Find start of summary ("HOURS PRESENT")
+                for col_to_clear in range(old_summary_start_col - 1, sheet.max_column + 2):
                     for row_to_clear in range(1, sheet.max_row + 2):
                         cell = sheet.cell(row=row_to_clear, column=col_to_clear)
-                        cell.value = None
-                        cell.fill = no_fill
+                        cell.value, cell.fill = None, no_fill
             
-            # --- 2. Determine which column to write the attendance data to ---
+            # --- 4. Determine which column to write the new attendance data to ---
             attendance_col = 0
             if overwrite_col:
-                # If a column is specified, we will overwrite it
                 attendance_col = overwrite_col
             else:
-                # Otherwise, find the next empty column for a new entry
                 attendance_col = 4
                 while sheet.cell(row=2, column=attendance_col).value is not None:
                     attendance_col += 1
-
-            # --- 3. Write the new attendance data ---
+            
+            # --- 5. Write the new attendance data ---
             sheet.cell(row=2, column=attendance_col).value = attendance_date
             sheet.cell(row=3, column=attendance_col).value = num_hours
             for i in range(5, total_students + 5):
@@ -669,35 +715,40 @@ class AttendanceApp(ctk.CTk):
                 else:
                     cell.value, cell.fill = 'P', green_fill
 
-            # --- 4. Create the new summary block ---
+            # --- 6. CREATE: a new, updated summary block ---
             summary_start_col = attendance_col + 3
-            try:
-                overall_total_hours = sum(int(sheet.cell(row=3, column=col).value or 0) for col in range(4, attendance_col + 1))
-            except (ValueError, TypeError):
-                return False, "Error: One of the 'Hours' values in row 3 is not a valid number."
-
+            overall_total_hours = sum(int(sheet.cell(row=3, column=col).value or 0) for col in range(4, attendance_col + 1))
+            
             sheet.cell(row=2, column=summary_start_col).value = overall_total_hours
             sheet.cell(row=1, column=summary_start_col).value = "TOTAL HOURS"
             sheet.cell(row=1, column=summary_start_col).font = Font(bold=True)
+            
             summary_headers = ["HOURS PRESENT", "HOURS ABSENT", "PERCENTAGE"]
-            header_font = Font(bold=True, name='Calibri', color="FFFFFF")
-            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
             for i, header in enumerate(summary_headers):
                 cell = sheet.cell(row=4, column=summary_start_col + i)
                 cell.value, cell.font, cell.fill = header, header_font, header_fill
 
             for row in range(5, total_students + 5):
-                present_hours = 0
-                for col in range(4, attendance_col + 1):
-                    session_hours = int(sheet.cell(row=3, column=col).value or 0)
-                    if sheet.cell(row=row, column=col).value == 'P': present_hours += session_hours
-                
+                present_hours = sum(int(sheet.cell(row=3, column=col).value or 0) for col in range(4, attendance_col + 1) if sheet.cell(row=row, column=col).value == 'P')
                 absent_hours = overall_total_hours - present_hours
                 percentage = (present_hours / overall_total_hours * 100) if overall_total_hours > 0 else 0
-                
                 sheet.cell(row, summary_start_col).value = present_hours
                 sheet.cell(row, summary_start_col + 1).value = absent_hours
                 sheet.cell(row, summary_start_col + 2).value = f"{percentage:.2f}"
+
+            # --- 7. "PASTE": Write the stored assessment data back to the sheet ---
+            if assessment_data:
+                # --- THIS LINE IS THE FIX ---
+                # summary_start_col + 2 is the PERCENTAGE column.
+                # + 3 creates a 2-column gap before the new assessments start.
+                new_assessment_start_col = summary_start_col + 2 + 3
+                for i, data in enumerate(assessment_data):
+                    current_col = new_assessment_start_col + i
+                    sheet.cell(row=3, column=current_col).value = data["max_marks_header"]
+                    cell = sheet.cell(row=4, column=current_col)
+                    cell.value, cell.font, cell.fill = data["name"], header_font, header_fill
+                    for r, mark in enumerate(data["marks"]):
+                        sheet.cell(row=r + 5, column=current_col).value = mark
 
             self.apply_standard_styles(sheet, total_students)
             self.wb.save(os.path.join(USER_DATA_PATH, self.current_filename))

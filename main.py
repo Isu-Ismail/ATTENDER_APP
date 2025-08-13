@@ -6,8 +6,6 @@ from openpyxl.utils import get_column_letter
 from datetime import date, datetime
 import customtkinter as ctk
 from tkinter import messagebox
-
-# Import from our new custom modules
 from config import ICON_PATH, USER_DATA_PATH, resource_path
 from excel_helpers import count_student_rows
 from ui_windows import LowAttendanceWindow, ManageWindow, DetailedReportWindow,BulkEntryWindow, MarkEntryWindow
@@ -15,10 +13,6 @@ from ui_windows import LowAttendanceWindow, ManageWindow, DetailedReportWindow,B
 # --- Main Application Class ---
 class AttendanceApp(ctk.CTk):
     """The main application class."""
-    # In your main.py file, inside the AttendanceApp class:
-
-    # In main.py, inside the AttendanceApp class
-
     def __init__(self):
         super().__init__()
         

@@ -309,12 +309,14 @@ class DetailedReportWindow(ctk.CTkToplevel):
         self.tab_view.pack(padx=20, pady=40, fill="both", expand=True)
         self.tab_view.add("By Date")
         self.tab_view.add("By Name")
+        self.tab_view.add("Student Summary")
         
         # --- Populate the "By Date" Tab ---
         self.setup_date_tab()
         
         # --- Populate the "By Name" Tab ---
         self.setup_name_tab()
+        self.setup_student_summary_tab()
 
     def setup_date_tab(self):
         """Creates the widgets for the 'By Date' report tab with a collapsible list."""
@@ -426,6 +428,58 @@ class DetailedReportWindow(ctk.CTkToplevel):
         self.name_results_textbox.delete("1.0", "end")
         self.name_results_textbox.insert("1.0", report_text)
         self.name_results_textbox.configure(state="disabled")
+
+    def setup_student_summary_tab(self):
+        """Creates the UI for the cross-subject student summary report using checkboxes."""
+        summary_tab = self.tab_view.tab("Student Summary")
+
+        top_frame = ctk.CTkFrame(summary_tab)
+        top_frame.pack(padx=10, pady=10, fill="x")
+        ctk.CTkLabel(top_frame, text="Select students for a full report:").pack(side="left", anchor="w", padx=10, pady=5)
+        
+        self.summary_toggle_button = ctk.CTkButton(top_frame, text="Hide Student List", width=140, command=self.toggle_student_summary_list)
+        self.summary_toggle_button.pack(side="right", anchor="e", padx=10, pady=5)
+
+        self.summary_checklist_frame = ctk.CTkScrollableFrame(summary_tab, label_text="Master Student List")
+        self.summary_checklist_frame.pack(padx=10, pady=5, fill="both", expand=True)
+
+        self.summary_checkboxes = {} # Use checkboxes for multi-select
+        all_students = self.app.get_all_students_in_workbook()
+        for name in all_students:
+            var = ctk.StringVar(value="off")
+            cb = ctk.CTkCheckBox(self.summary_checklist_frame, text=name, variable=var, onvalue="on", offvalue="off")
+            cb.pack(anchor="w", padx=10, pady=2)
+            self.summary_checkboxes[name] = var
+
+        generate_btn = ctk.CTkButton(summary_tab, text="Generate Student Summary", command=self.generate_student_summary_report)
+        generate_btn.pack(padx=10, pady=10, fill="x")
+        
+        self.summary_results_textbox = ctk.CTkTextbox(summary_tab, corner_radius=8, font=("", 14))
+        self.summary_results_textbox.pack(padx=10, pady=10, fill="both", expand=True)
+        self.summary_results_textbox.insert("1.0", "Select one or more students and click 'Generate'.")
+        self.summary_results_textbox.configure(state="disabled")
+
+    def generate_student_summary_report(self):
+        """Gathers data for multiple students across all sheets."""
+        selected_students = [name for name, var in self.summary_checkboxes.items() if var.get() == "on"]
+        
+        report_text = self.app.get_summary_for_student_across_all_sheets(selected_students)
+            
+        self.summary_results_textbox.configure(state="normal")
+        self.summary_results_textbox.delete("1.0", "end")
+        self.summary_results_textbox.insert("1.0", report_text)
+        self.summary_results_textbox.configure(state="disabled")
+
+    def toggle_student_summary_list(self):
+        """Shows or hides the master student list frame."""
+        if self.summary_checklist_frame.winfo_viewable():
+            self.summary_checklist_frame.pack_forget()
+            self.summary_toggle_button.configure(text="Show Student List")
+        else:
+            self.summary_checklist_frame.pack(padx=10, pady=5, fill="both", expand=True)
+            self.summary_toggle_button.configure(text="Hide Student List")
+
+    
 
 class RollGeneratorDialog(ctk.CTkToplevel):
     """A dialog for generating complex roll numbers based on rules."""
@@ -990,7 +1044,7 @@ class FinalResultDialog(ctk.CTkToplevel):
     def __init__(self, master):
         super().__init__(master)
         self.title("Final Result Calculator")
-        self.geometry("450x500")
+        self.geometry("450x450")
         self.transient(master)
         self.focus()
         self.lift()
@@ -1016,13 +1070,6 @@ class FinalResultDialog(ctk.CTkToplevel):
             entry.grid(row=i, column=1, padx=10, pady=5, sticky="ew")
             self.weight_entries[assessment] = entry
 
-        bottom_frame = ctk.CTkFrame(self)
-        bottom_frame.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
-        bottom_frame.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(bottom_frame, text="Final Result Column Name:").grid(row=0, column=0, padx=10, pady=5, sticky="w")
-        self.final_col_name_entry = ctk.CTkEntry(bottom_frame, placeholder_text="e.g., Final Grade")
-        self.final_col_name_entry.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
-
         self.calc_button = ctk.CTkButton(self, text="Calculate and Add to Sheet", command=self.calculate)
         self.calc_button.grid(row=3, column=0, padx=20, pady=20)
 
@@ -1042,13 +1089,12 @@ class FinalResultDialog(ctk.CTkToplevel):
         if not messagebox.askyesno("Confirm Weights", f"The total weight assigned is {total_weight}%. Do you want to proceed?", parent=self):
             return
 
-        final_col_name = self.final_col_name_entry.get().strip()
-        if not final_col_name:
-            return messagebox.showerror("Error", "Please provide a name for the final result column.", parent=self)
+        # The final column name is now fixed
+        final_col_name = "FINAL RESULT"
 
         success, message = self.app.calculate_final_result(self.sheet, weights_dict, final_col_name)
         if success:
-            self.mark_entry_window.refresh_assessments() # Refresh main mark window
+            self.mark_entry_window.refresh_assessments()
             messagebox.showinfo("Success", message, parent=self)
             self.destroy()
         else:

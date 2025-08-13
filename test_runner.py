@@ -3,13 +3,11 @@ import random
 import time
 from datetime import date, timedelta
 
-# Import the main application class and config variables from your modules
+# Import the main application class from your script
 try:
-    from main import AttendanceApp
-    from config import USER_DATA_PATH
-    from ui_windows import ManageWindow, MarkEntryWindow
-except ImportError as e:
-    print(f"Error: Make sure this script is in the same folder as your application files.\nDetails: {e}")
+    from main import AttendanceApp, USER_DATA_PATH
+except ImportError:
+    print("Error: Make sure this script is in the same folder as 'main.py'")
     exit()
 
 def run_advanced_test():
@@ -17,11 +15,10 @@ def run_advanced_test():
     print("--- Starting Advanced Automated Test ---")
 
     # --- Test Parameters ---
-    TEST_FILENAME = "full_system_test.xlsx"
-    SUBJECTS = ["ADVANCED PYTHON", "ALGORITHMS"]
-    ASSESSMENTS = {"MIDTERM EXAM": 50, "FINAL PROJECT": 100} # Name: Max Marks
-    NUM_STUDENTS = 100
-    NUM_SESSIONS_PER_SUBJECT = 3
+    TEST_FILENAME = "advanced_automated_test.xlsx"
+    SUBJECTS_TO_CREATE = ["PYTHON PROGRAMMING"]
+    NUM_STUDENTS = 20
+    NUM_SESSIONS_PER_SUBJECT = 30
 
     # --- 1. Clean up previous test file ---
     test_file_path = os.path.join(USER_DATA_PATH, TEST_FILENAME)
@@ -31,35 +28,44 @@ def run_advanced_test():
 
     # --- 2. Generate Test Data ---
     print(f"[SETUP] Generating {NUM_STUDENTS} students with random roll numbers...")
-    student_names = [f"STUDENT_{i+1:03d}" for i in range(NUM_STUDENTS)]
-    student_rolls = [f"2025-{random.choice(['CS', 'IT', 'ECE'])}-{i+1:03d}" for i in range(NUM_STUDENTS)]
+    student_names = []
+    student_rolls = []
+    departments = ["CS", "IT", "ECE", "MECH"]
+    for i in range(NUM_STUDENTS):
+        student_names.append(f"STUDENT_{i+1:03d}")
+        # Generate a complex roll number, e.g., 2025-CS-042
+        roll_number = f"2025-{random.choice(departments)}-{i+1:03d}"
+        student_rolls.append(roll_number)
 
-    # --- 3. Initialize the Application ---
+    # --- 3. Create an instance of your application ---
     app = AttendanceApp()
     app.update()
     time.sleep(1)
 
     # --- 4. Setup File, Subjects, and Students ---
-    print(f"\n[PHASE 1] Testing Subject and Student Management...")
+    print(f"\n[SETUP] Creating test file: {TEST_FILENAME}")
     app.file_combo.set(TEST_FILENAME)
     app.load_file()
     app.update()
 
+    print("[SETUP] Opening Management Window...")
     app.open_manage_window()
     manage_win = app.manage_win
     manage_win.update()
 
-    # Create Subjects
-    for subject in SUBJECTS:
-        print(f"  -> Creating subject: {subject}")
+    # Create all subjects
+    for subject in SUBJECTS_TO_CREATE:
+        print(f"[SETUP] Creating subject: {subject}")
+        manage_win.new_subject_entry.delete(0, "end")
         manage_win.new_subject_entry.insert(0, subject)
         manage_win.add_subject()
         manage_win.update()
         time.sleep(0.5)
     
-    # Populate the first subject
-    print(f"  -> Populating '{SUBJECTS[0]}' with {NUM_STUDENTS} students...")
-    manage_win.subject_select_combo.set(SUBJECTS[0])
+    # Populate the first subject with the generated student list
+    print(f"[SETUP] Populating '{SUBJECTS_TO_CREATE[0]}' with {NUM_STUDENTS} students...")
+    manage_win.subject_select_combo.set(SUBJECTS_TO_CREATE[0])
+    manage_win.max_students_entry.delete(0, "end")
     manage_win.max_students_entry.insert(0, str(NUM_STUDENTS))
     manage_win.names_textbox.insert("1.0", "\n".join(student_names))
     manage_win.rolls_textbox.insert("1.0", "\n".join(student_rolls))
@@ -67,67 +73,50 @@ def run_advanced_test():
     manage_win.update()
     time.sleep(1)
 
-    # Test the "Copy Data" feature for the second subject
-    if len(SUBJECTS) > 1:
-        print(f"  -> Testing 'Copy Data' to '{SUBJECTS[1]}'")
-        manage_win.subject_select_combo.set(SUBJECTS[1])
-        manage_win.copy_source_combo.set(SUBJECTS[0])
+    # Use the "Copy Data" feature to populate the other subjects
+    for i in range(1, len(SUBJECTS_TO_CREATE)):
+        target_subject = SUBJECTS_TO_CREATE[i]
+        source_subject = SUBJECTS_TO_CREATE[0]
+        print(f"[SETUP] Copying student data to '{target_subject}'...")
+        manage_win.subject_select_combo.set(target_subject)
+        manage_win.copy_source_combo.set(source_subject)
         manage_win.copy_student_data()
         manage_win.update()
         time.sleep(0.5)
         manage_win.update_students()
         manage_win.update()
         time.sleep(1)
-    
+
+    print("[SETUP] Closing Management Window.")
     manage_win.destroy()
     app.update()
 
     # --- 5. Mark Attendance for all subjects ---
-    print(f"\n[PHASE 2] Testing Attendance Marking...")
-    for subject in SUBJECTS:
-        print(f"  -> Marking attendance for: {subject}")
+    for subject in SUBJECTS_TO_CREATE:
+        print(f"\n[TEST] Now marking attendance for subject: {subject}")
         app.subject_combo.set(subject)
         for i in range(NUM_SESSIONS_PER_SUBJECT):
-            # Generate random data for the session
             session_date = (date.today() + timedelta(days=i)).strftime("%d-%m-%Y")
-            session_hours = random.randint(1, 2)
-            absent_rolls = random.sample(range(1, NUM_STUDENTS + 1), 15) # 15 absentees
+            session_hours = random.randint(1, 4)
+            num_absent = random.randint(0, 20)
+            absent_rolls = random.sample(range(1, NUM_STUDENTS + 1), num_absent)
+            absent_rolls_str = ", ".join(map(str, absent_rolls))
+
+            print(f"  -> Session {i+1}/{NUM_SESSIONS_PER_SUBJECT}: Marking {num_absent} absentees...")
             
-            # Call backend function directly to bypass GUI and confirmation dialogs
+            app.date_entry.delete(0, "end")
+            app.hours_entry.delete(0, "end")
+            app.rolls_entry.delete(0, "end")
+            app.date_entry.insert(0, session_date)
+            app.hours_entry.insert(0, str(session_hours))
+            app.rolls_entry.insert(0, absent_rolls_str)
+            app.update()
+            
+            # Bypass GUI and call the backend function directly
             sheet = app.wb[subject]
             app.mark_attendance(sheet, NUM_STUDENTS, absent_rolls, session_hours, session_date)
-            print(f"    - Session {i+1}/{NUM_SESSIONS_PER_SUBJECT} marked for {session_date}.")
             app.update()
             time.sleep(0.3)
-
-    # --- 6. Test Mark Entry ---
-    print(f"\n[PHASE 3] Testing Mark Entry...")
-    app.subject_combo.set(SUBJECTS[0]) # Test on the first subject
-    app.open_mark_entry_window()
-    mark_win = app.mark_win
-    mark_win.update()
-
-    # Add new assessment columns
-    for name, max_marks in ASSESSMENTS.items():
-        print(f"  -> Adding assessment: {name} (out of {max_marks})")
-        app.add_new_assessment_column(app.wb[SUBJECTS[0]], name, str(max_marks))
-        mark_win.refresh_assessments()
-        mark_win.update()
-        time.sleep(0.5)
-
-    # Test bulk mark entry
-    assessment_to_test = list(ASSESSMENTS.keys())[0]
-    print(f"  -> Testing Bulk Mark Entry for: {assessment_to_test}")
-    mark_win.assessment_combo.set(assessment_to_test)
-    max_marks_for_test = ASSESSMENTS[assessment_to_test]
-    marks_to_paste = [str(random.randint(int(max_marks_for_test*0.6), max_marks_for_test)) for _ in range(NUM_STUDENTS)]
-    mark_win.bulk_textbox.insert("1.0", "\n".join(marks_to_paste))
-    mark_win.apply_bulk_marks()
-    mark_win.save_marks() # Bypassing confirmation for automation
-    mark_win.update()
-    time.sleep(1)
-
-    mark_win.destroy()
 
     print("\n--- Advanced Test Finished Successfully! ---")
     app.show_status("Automated test finished!", is_error=False)

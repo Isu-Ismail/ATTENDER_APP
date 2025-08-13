@@ -7,6 +7,9 @@ from datetime import date, datetime
 # Import from our custom modules
 from config import ICON_PATH, resource_path, USER_DATA_PATH
 from excel_helpers import count_student_rows
+import threading
+import requests
+import time
 
 class LowAttendanceWindow(ctk.CTkToplevel):
     """Interactive window to generate low attendance reports."""
@@ -1097,38 +1100,177 @@ class FinalResultDialog(ctk.CTkToplevel):
         else:
             messagebox.showerror("Error", message, parent=self)
         # ... UI and logic for the calculator ...
-# #class LoadingWindow(ctk.CTkToplevel):
-#     """A simple splash screen that shows while the main app is loading."""
-#     # In ui_windows.py, inside the LoadingWindow class
-#     def __init__(self, master):
-#         super().__init__(master)
-#         self.title("Loading")
-        
-#         width, height = 300, 150
-#         screen_width = self.winfo_screenwidth()
-#         screen_height = self.winfo_screenheight()
-#         x = (screen_width / 2) - (width / 2)
-#         y = (screen_height / 2) - (height / 2)
-#         self.geometry(f'{width}x{height}+{int(x)}+{int(y)}')
-#         self.overrideredirect(True)
 
-#         self.main_frame = ctk.CTkFrame(self, corner_radius=10)
-#         self.main_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-#         self.label = ctk.CTkLabel(self.main_frame, text="Attendance Marker", font=ctk.CTkFont(size=16, weight="bold"))
-#         self.label.pack(padx=20, pady=(20,10))
+import threading
+import requests
+import time
+from datetime import date, datetime
+import customtkinter as ctk
+from tkinter import messagebox
+from config import ICON_PATH, resource_path
+from excel_helpers import count_student_rows
+
+
+class LiveSessionWindow(ctk.CTkToplevel):
+    """Window for managing a live OTP attendance session with manual refresh."""
+    def __init__(self, master, sheet):
+        super().__init__(master)
+        self.title("Live Attendance Session")
+        self.geometry("450x600")
+        self.transient(master)
+        self.focus()
+
+        self.app = master
+        self.sheet = sheet
+        self.otp = None
+        self.all_students = self.app.get_student_list(self.sheet)
+        self.all_rolls = self.app.get_complex_rolls(self.sheet)
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(3, weight=1)
         
-#         self.progress_bar = ctk.CTkProgressBar(self.main_frame, mode='indeterminate')
+        # --- Top Controls ---
+        top_frame = ctk.CTkFrame(self)
+        top_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+        top_frame.grid_columnconfigure(1, weight=1)
         
-#         self.start_button = ctk.CTkButton(self.main_frame, text="Start Application", width=200, height=40, command=self.start_build)
-#         self.start_button.pack(padx=20, pady=10, expand=True)
+        ctk.CTkLabel(top_frame, text="Date:").grid(row=0, column=0, padx=(10,5), pady=5, sticky="w")
+        self.date_entry = ctk.CTkEntry(top_frame)
+        self.date_entry.grid(row=0, column=1, padx=(0,10), pady=5, sticky="ew")
+        self.date_entry.insert(0, date.today().strftime("%d-%m-%Y"))
+        ctk.CTkLabel(top_frame, text="Hours:").grid(row=1, column=0, padx=(10,5), pady=5, sticky="w")
+        self.hours_entry = ctk.CTkEntry(top_frame)
+        self.hours_entry.grid(row=1, column=1, padx=(0,10), pady=5, sticky="ew")
+
+        self.start_button = ctk.CTkButton(self, text="Start Session & Generate OTP", command=self.start_session)
+        self.start_button.grid(row=1, column=0, padx=10, pady=10)
+        
+        self.otp_label = ctk.CTkLabel(self, text="OTP will appear here", font=ctk.CTkFont(size=28, weight="bold"))
+        self.otp_label.grid(row=2, column=0, padx=10, pady=10)
+        
+        # --- Live List of Present Students ---
+        self.live_list_frame = ctk.CTkScrollableFrame(self, label_text="Present Students")
+        self.live_list_frame.grid(row=3, column=0, padx=10, pady=10, sticky="nsew")
+        
+        # --- Bottom Controls ---
+        bottom_frame = ctk.CTkFrame(self, fg_color="transparent")
+        bottom_frame.grid(row=4, column=0, padx=10, pady=10, sticky="ew")
+        bottom_frame.grid_columnconfigure(1, weight=1)
+        
+        self.refresh_button = ctk.CTkButton(bottom_frame, text="Refresh List", state="disabled", command=self.refresh_present_list)
+        self.refresh_button.grid(row=0, column=0, padx=(0,5))
+        
+        self.finish_button = ctk.CTkButton(bottom_frame, text="Finish Session & Save", state="disabled", command=self.finish_session)
+        self.finish_button.grid(row=0, column=1, padx=(5,0), sticky="ew")
+        
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.update_ui_list([])
+
+    def start_session(self):
+        date_str = self.date_entry.get()
+        hours_str = self.hours_entry.get()
+        try: datetime.strptime(date_str, "%d-%m-%Y")
+        except ValueError: return messagebox.showerror("Error", "Invalid date format. Use DD-MM-YYYY.", parent=self)
+        try:
+            num_hours = int(hours_str)
+            if not 1 <= num_hours <= 8: return messagebox.showerror("Error", "Hours must be between 1 and 8.", parent=self)
+        except (ValueError, TypeError): return messagebox.showerror("Error", "Hours must be a valid number.", parent=self)
+        for col in range(4, self.sheet.max_column + 2):
+            if self.sheet.cell(row=2, column=col).value == date_str:
+                return messagebox.showerror("Error", "Attendance for this date has already been marked.", parent=self)
+
+        self.start_button.configure(state="disabled", text="Session Active...")
+        self.finish_button.configure(state="normal")
+        self.refresh_button.configure(state="normal")
+        
+        api_url = "http://ismailisims.pythonanywhere.com/attendance/api/start-session/"
+        payload = {"teacher_username": "default_teacher", "subject_name": self.sheet.title, "valid_rolls": self.all_rolls}
+        try:
+            response = requests.post(api_url, json=payload, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            if data.get('status') == 'success':
+                self.otp = data.get('otp')
+                self.otp_label.configure(text=f"OTP: {self.otp}")
+                self.refresh_present_list()
+            else:
+                messagebox.showerror("API Error", data.get('message'), parent=self)
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Connection Error", f"Could not connect to server: {e}", parent=self)
+            self.start_button.configure(state="normal", text="Start Session & Generate OTP")
+
+    def refresh_present_list(self):
+        """Starts a background thread to fetch the latest student list without freezing the UI."""
+        self.refresh_button.configure(state="disabled", text="Refreshing...")
+        threading.Thread(target=self._worker_get_list, daemon=True).start()
+
+    def _worker_get_list(self):
+        """The actual network call that runs in the background and handles feedback."""
+        if not self.otp:
+            self.app.after(0, self.refresh_button.configure, {"state": "normal", "text": "Refresh List"})
+            return
+        
+        api_url = f"http://ismailisims.pythonanywhere.com/attendance/api/get-present-list/?otp={self.otp}"
+        try:
+            response = requests.get(api_url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            if data.get('status') == 'success':
+                present_students = data.get('present_students', [])
+                self.app.after(0, self.update_ui_list, present_students)
+                self.app.after(0, self.app.show_status, "Live list refreshed successfully.")
+            else:
+                error_message = data.get('message', 'Unknown API error')
+                self.app.after(0, self.app.show_status, f"Error: {error_message}", True)
+        except requests.exceptions.RequestException as e:
+            self.app.after(0, self.app.show_status, f"Connection Error: Could not refresh list.", True)
+            print(f"Connection error details: {e}")
+        finally:
+            # This block always runs, ensuring the button is re-enabled
+            self.app.after(0, self.refresh_button.configure, {"state": "normal", "text": "Refresh List"})
+
+    def update_ui_list(self, present_students):
+        """Updates the listbox on the main GUI thread."""
+        for widget in self.live_list_frame.winfo_children():
+            widget.destroy()
+        
+        self.live_list_frame.configure(label_text=f"Present Students ({len(present_students)} / {len(self.all_students)})")
+        present_rolls_set = set(present_students)
+        for name, roll in zip(self.all_students, self.all_rolls):
+            is_present = roll in present_rolls_set
+            label_text = f"{name} ({roll})"
+            label_color = "#28a745" if is_present else "gray60"
+            ctk.CTkLabel(self.live_list_frame, text=label_text, text_color=label_color, font=ctk.CTkFont(weight="bold" if is_present else "normal")).pack(anchor="w", padx=5)
+
+    def finish_session(self):
+        self.finish_button.configure(state="disabled")
+        api_url = f"http://ismailisims.pythonanywhere.com/attendance/api/get-present-list/?otp={self.otp}"
+        try:
+            response = requests.get(api_url, timeout=5)
+            data = response.json()
+            present_rolls = set(data.get('present_students', []))
+            
+            roll_map = {roll: i + 1 for i, roll in enumerate(self.all_rolls)}
+            absent_rolls_simple = [roll_map[r] for r in self.all_rolls if r not in present_rolls]
+            
+            date_str = self.date_entry.get()
+            num_hours = int(self.hours_entry.get())
+            
+            success, msg = self.app.mark_attendance(self.sheet, len(self.all_students), absent_rolls_simple, num_hours, date_str)
+            if success:
+                messagebox.showinfo("Success", "Attendance has been saved to the Excel file.", parent=self)
+                self.destroy()
+            else:
+                messagebox.showerror("Error", f"Failed to save to Excel: {msg}", parent=self)
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Connection Error", f"Could not get final list: {e}", parent=self)
+            self.finish_button.configure(state="normal")
     
-#     def start_build(self):
-#         """Hides the start button, shows the progress bar, and tells the main app to build."""
-#         self.start_button.pack_forget()
-#         self.label.configure(text="Loading Application...")
-#         self.progress_bar.pack(padx=20, pady=10, fill="x", expand=True)
-#         self.progress_bar.start()
-        
-#         # Call the main app's setup function after a short delay
-#         self.master.after(100, self.master.setup_main_application)
+    def on_close(self):
+        if self.otp:
+            api_url = "http://ismailisims.pythonanywhere.com/attendance/api/finish-session/"
+            try:
+                threading.Thread(target=lambda: requests.post(api_url, json={'otp': self.otp}, timeout=3), daemon=True).start()
+            except: pass
+        self.destroy()

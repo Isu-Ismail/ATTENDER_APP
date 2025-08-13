@@ -8,31 +8,35 @@ import customtkinter as ctk
 from tkinter import messagebox
 from config import ICON_PATH, USER_DATA_PATH, resource_path
 from excel_helpers import count_student_rows
-from ui_windows import LowAttendanceWindow, ManageWindow, DetailedReportWindow,BulkEntryWindow, MarkEntryWindow
+from ui_windows import LowAttendanceWindow, ManageWindow, DetailedReportWindow,BulkEntryWindow, MarkEntryWindow, LiveSessionWindow
+import requests
+import threading
 
 # --- Main Application Class ---
 class AttendanceApp(ctk.CTk):
     """The main application class."""
     def __init__(self):
         super().__init__()
-        
-        # All setup code now runs directly here
         self.title("Attendance Marker")
-        self.geometry("500x700")
+        self.geometry("500x750") # You can adjust the height as you like
         self.resizable(False, False)
         try:
             self.iconbitmap(resource_path(ICON_PATH))
         except Exception as e:
             print(f"Icon not found at '{ICON_PATH}'. Skipping. Error: {e}")
         
+        # --- UPDATED GRID CONFIGURATION ---
         self.grid_columnconfigure(0, weight=1)
-        self.manage_win = self.report_win = None
+        self.grid_rowconfigure(1, weight=1) # Configure row 1 (the scrollable frame) to expand
+        
+        self.manage_win = self.report_win = self.detail_win = self.bulk_win = self.mark_win = None
         self.current_filename = None
         self.wb = None
         self.setup_ui()
         self.set_main_controls_state("disabled")
-        
+    
     def setup_ui(self):
+        # --- Top frame (not scrollable) ---
         file_frame = ctk.CTkFrame(self)
         file_frame.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="ew")
         file_frame.grid_columnconfigure(0, weight=1)
@@ -46,8 +50,14 @@ class AttendanceApp(ctk.CTk):
         self.load_button = ctk.CTkButton(file_frame, text="Load File", width=100, command=self.load_file)
         self.load_button.grid(row=1, column=2, padx=(0,10), pady=10)
         
-        self.main_frame = ctk.CTkFrame(self)
-        self.main_frame.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
+        # --- NEW: Main scrollable frame for all other content ---
+        content_frame = ctk.CTkScrollableFrame(self)
+        content_frame.grid(row=1, column=0, padx=20, pady=0, sticky="nsew")
+        content_frame.grid_columnconfigure(0, weight=1)
+
+        # --- All widgets below are now placed inside 'content_frame' ---
+        self.main_frame = ctk.CTkFrame(content_frame)
+        self.main_frame.grid(row=0, column=0, pady=10, sticky="ew")
         self.main_frame.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(self.main_frame, text="Select Subject", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
         self.subject_combo = ctk.CTkComboBox(self.main_frame, state="readonly", values=[])
@@ -67,43 +77,41 @@ class AttendanceApp(ctk.CTk):
         self.absent_btn.pack(side="left")
         self.present_btn = ctk.CTkRadioButton(mode_frame, text="Presentees", variable=self.mode_var, value="present")
         self.present_btn.pack(side="left", padx=20)
-        ctk.CTkLabel(self.main_frame, text="Enter Roll Numbers (comma-separated) 0 -All present ", font=ctk.CTkFont(weight="bold")).grid(row=6, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
+        ctk.CTkLabel(self.main_frame, text="Enter Roll Numbers (comma-separated)", font=ctk.CTkFont(weight="bold")).grid(row=6, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
         self.rolls_entry = ctk.CTkEntry(self.main_frame, placeholder_text="e.g., 2, 4, 9")
         self.rolls_entry.grid(row=7, column=0, columnspan=2, padx=10, pady=(0, 20), sticky="ew")
 
-        # In the setup_ui function of AttendanceApp:
-
-        # In setup_ui of AttendanceApp:
-        self.submit_button = ctk.CTkButton(self, text="Mark Attendance", command=self.validate_and_submit)
-        self.submit_button.grid(row=2, column=0, padx=20, pady=(10, 5), sticky="ew")
+        self.submit_button = ctk.CTkButton(content_frame, text="Mark Attendance", command=self.validate_and_submit)
+        self.submit_button.grid(row=1, column=0, pady=(10, 5), sticky="ew")
         
-        # Two rows of tool buttons for a cleaner layout
-        tools_frame1 = ctk.CTkFrame(self, fg_color="transparent")
-        tools_frame1.grid(row=3, column=0, padx=20, pady=(5,0), sticky="ew")
+        tools_frame1 = ctk.CTkFrame(content_frame, fg_color="transparent")
+        tools_frame1.grid(row=2, column=0, pady=5, sticky="ew")
         tools_frame1.grid_columnconfigure((0,1), weight=1)
-
         self.report_button = ctk.CTkButton(tools_frame1, text="Low Attendance", fg_color="#D35400", hover_color="#E67E22", command=self.open_low_attendance_window)
         self.report_button.grid(row=0, column=0, padx=(0,5), sticky="ew")
         self.detailed_report_button = ctk.CTkButton(tools_frame1, text="Detailed Report", command=self.open_detailed_report_window)
         self.detailed_report_button.grid(row=0, column=1, padx=(5,0), sticky="ew")
         
-        tools_frame2 = ctk.CTkFrame(self, fg_color="transparent")
-        tools_frame2.grid(row=4, column=0, padx=20, pady=5, sticky="ew")
+        tools_frame2 = ctk.CTkFrame(content_frame, fg_color="transparent")
+        tools_frame2.grid(row=3, column=0, pady=5, sticky="ew")
         tools_frame2.grid_columnconfigure((0,1), weight=1)
-
         self.bulk_entry_button = ctk.CTkButton(tools_frame2, text="Bulk Entry", command=self.open_bulk_entry_window)
         self.bulk_entry_button.grid(row=0, column=0, padx=(0,5), sticky="ew")
         self.mark_entry_button = ctk.CTkButton(tools_frame2, text="Mark Entry", command=self.open_mark_entry_window)
         self.mark_entry_button.grid(row=0, column=1, padx=(5,0), sticky="ew")
         
-        self.manage_button = ctk.CTkButton(self, text="Manage Subjects & Students", command=self.open_manage_window)
-        self.manage_button.grid(row=5, column=0, padx=20, pady=5, sticky="ew")
+        self.manage_button = ctk.CTkButton(content_frame, text="Manage Subjects & Students", command=self.open_manage_window)
+        self.manage_button.grid(row=4, column=0, pady=5, sticky="ew")
 
-        self.status_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.status_frame.grid(row=6, column=0, padx=20, pady=(10, 10), sticky="ew")
+        self.live_session_button = ctk.CTkButton(content_frame, text="Start Live OTP Session", fg_color="green", hover_color="#006400", command=self.open_live_session_window)
+        self.live_session_button.grid(row=5, column=0, pady=(5,10), sticky="ew")
+
+        # --- Status frame (not scrollable) ---
+        self.status_frame = ctk.CTkFrame(self)
+        self.status_frame.grid(row=2, column=0, padx=20, pady=(10, 10), sticky="ew")
         self.status_label = ctk.CTkLabel(self.status_frame, text="", wraplength=450)
         self.status_label.pack(fill="both", expand=True, padx=5, pady=5)
-
+    
     def open_bulk_entry_window(self):
         """Opens the new bulk entry window."""
         self.hide_status()
@@ -349,7 +357,10 @@ class AttendanceApp(ctk.CTk):
         self.status_frame.grid(row=6, column=0, padx=20, pady=(10, 10), sticky="ew")
         
     def set_main_controls_state(self, state="normal", allow_manage=False):
-        widgets = [self.subject_combo, self.date_entry, self.hours_entry, self.rolls_entry, self.submit_button, self.report_button, self.detailed_report_button, self.bulk_entry_button, self.mark_entry_button, self.absent_btn, self.present_btn]
+        widgets = [self.subject_combo, self.date_entry, self.hours_entry, self.rolls_entry, 
+                   self.submit_button, self.report_button, self.detailed_report_button, 
+                   self.bulk_entry_button, self.mark_entry_button, self.absent_btn, 
+                   self.present_btn, self.live_session_button]
         for widget in widgets: widget.configure(state=state)
         self.manage_button.configure(state="normal" if state == "normal" or allow_manage else "disabled")
     
@@ -805,6 +816,23 @@ class AttendanceApp(ctk.CTk):
             return True, "Attendance marked and summary updated!"
         except PermissionError: return False, f"Could not save. '{self.current_filename}' is open."
         except Exception as e: return False, f"An error occurred: {e}"
+
+    def get_complex_rolls(self, sheet):
+        """Gets a list of all complex roll numbers from column C."""
+        return [str(sheet.cell(row=row, column=3).value) for row in range(5, count_student_rows(sheet) + 5) if sheet.cell(row=row, column=3).value]
+
+    def open_live_session_window(self):
+        """Opens the new Live OTP Session window."""
+        self.hide_status()
+        if not self.wb: return self.show_status("No file loaded.", is_error=True)
+        subject_name = self.subject_combo.get()
+        if not subject_name: return self.show_status("Please select a subject first.", is_error=True)
+        try:
+            sheet = self.wb[subject_name]
+            # Open as a non-singleton window each time
+            LiveSessionWindow(self, sheet)
+        except Exception as e:
+            self.show_status(f"Could not open Live Session: {e}", is_error=True)
 
 if __name__ == "__main__":
     app = AttendanceApp()

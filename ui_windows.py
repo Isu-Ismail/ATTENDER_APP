@@ -3,8 +3,6 @@ from tkinter import messagebox
 import openpyxl as xl
 import os
 from datetime import date, datetime
-
-# Import from our custom modules
 from config import ICON_PATH, resource_path, USER_DATA_PATH
 from excel_helpers import count_student_rows
 import threading
@@ -543,7 +541,6 @@ class RollGeneratorDialog(ctk.CTkToplevel):
 
         except Exception as e:
             messagebox.showerror("Error", f"Invalid input format. Please check your entries.\nDetails: {e}", parent=self)
-
 # In ui_windows.py
 class BulkEntryWindow(ctk.CTkToplevel):
     """A window for entering multiple attendance records at once."""
@@ -748,7 +745,6 @@ class BulkEntryWindow(ctk.CTkToplevel):
         
         self.log_message("\n--- Bulk processing complete! ---")
         self.process_button.configure(state="normal")
-
 # Add these three classes to ui_windows.py
 class AddAssessmentDialog(ctk.CTkToplevel):
     """A dialog to get the name and max marks for a new assessment."""
@@ -975,7 +971,6 @@ class MarkEntryWindow(ctk.CTkToplevel):
 
         success, message = self.app.save_marks(self.sheet, assessment_name, validated_marks)
         messagebox.showinfo("Status", message, parent=self)
-
 # Placeholder classes for future implementation
 class MarkConverterDialog(ctk.CTkToplevel):
     """A dialog to convert marks from one scale to another."""
@@ -1100,8 +1095,6 @@ class FinalResultDialog(ctk.CTkToplevel):
         else:
             messagebox.showerror("Error", message, parent=self)
         # ... UI and logic for the calculator ...
-
-
 
 class LiveSessionWindow(ctk.CTkToplevel):
     """Window for managing a live OTP attendance session with automatic polling."""

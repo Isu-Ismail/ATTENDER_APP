@@ -17,21 +17,38 @@ class AttendanceApp(ctk.CTk):
     """The main application class."""
     def __init__(self):
         super().__init__()
+        
+        # --- 1. Basic Window Setup ---
         self.title("Attendance Marker")
-        self.geometry("500x750") # You can adjust the height as you like
+        self.geometry("500x700")
         self.resizable(False, False)
         try:
             self.iconbitmap(resource_path(ICON_PATH))
         except Exception as e:
             print(f"Icon not found at '{ICON_PATH}'. Skipping. Error: {e}")
         
-        # --- UPDATED GRID CONFIGURATION ---
+        # --- 2. Grid Configuration ---
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1) # Configure row 1 (the scrollable frame) to expand
+        self.grid_rowconfigure(1, weight=1) # Makes the scrollable frame expand
         
+        # --- 3. Initialize All Instance Variables ---
+        # Initialize pop-up window trackers
         self.manage_win = self.report_win = self.detail_win = self.bulk_win = self.mark_win = None
+        # Initialize file and data variables
         self.current_filename = None
         self.wb = None
+        
+        # --- THIS IS THE FIX ---
+        # Initialize all widget variables to None to prevent AttributeErrors
+        self.file_combo = self.open_button = self.load_button = None
+        self.subject_combo = self.date_entry = self.hours_entry = None
+        self.mode_var = ctk.StringVar(value="absent") # This one needs to be created
+        self.absent_btn = self.present_btn = self.rolls_entry = None
+        self.submit_button = self.report_button = self.detailed_report_button = None
+        self.bulk_entry_button = self.mark_entry_button = self.manage_button = None
+        self.live_session_button = self.status_frame = self.status_label = None
+
+        # --- 4. Build UI and Set Initial State ---
         self.setup_ui()
         self.set_main_controls_state("disabled")
     
@@ -119,8 +136,10 @@ class AttendanceApp(ctk.CTk):
         subject_name = self.subject_combo.get()
         if not subject_name: return self.show_status("Please select a subject first.", is_error=True)
         
-        if hasattr(self, 'bulk_win') and self.bulk_win.winfo_exists():
+        if self.bulk_win is not None and self.bulk_win.winfo_exists():
             return self.bulk_win.focus()
+
+        
         try:
             sheet = self.wb[subject_name]
             self.bulk_win = BulkEntryWindow(self, sheet)
@@ -463,14 +482,19 @@ class AttendanceApp(ctk.CTk):
         return None # Return None if the header is not found for any reason
 
     def open_mark_entry_window(self):
-        """Opens the new mark entry window."""
+        """Opens the new mark entry window and assigns it to self.mark_win."""
         self.hide_status()
-        if not self.wb: return self.show_status("No file loaded.", is_error=True)
+        if not self.wb: 
+            return self.show_status("No file loaded.", is_error=True)
         subject_name = self.subject_combo.get()
-        if not subject_name: return self.show_status("Please select a subject first.", is_error=True)
+        if not subject_name: 
+            return self.show_status("Please select a subject first.", is_error=True)
         
-        if hasattr(self, 'mark_win') and self.mark_win.winfo_exists():
+        # --- THIS IS THE FIX ---
+        # This now correctly checks if the window object exists before using it
+        if self.mark_win is not None and self.mark_win.winfo_exists():
             return self.mark_win.focus()
+            
         try:
             sheet = self.wb[subject_name]
             self.mark_win = MarkEntryWindow(self, sheet)
@@ -569,7 +593,8 @@ class AttendanceApp(ctk.CTk):
         if not self.wb: return self.show_status("No file loaded.", is_error=True)
         subject_name = self.subject_combo.get()
         if not subject_name: return self.show_status("Please select a subject first.", is_error=True)
-        if hasattr(self, 'detail_win') and self.detail_win.winfo_exists(): return self.detail_win.focus()
+        if self.detail_win is not None and self.detail_win.winfo_exists():
+            return self.detail_win.focus()
         try:
             sheet = self.wb[subject_name]
             self.detail_win = DetailedReportWindow(self, sheet)

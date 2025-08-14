@@ -16,7 +16,7 @@ def run_advanced_test():
 
     # --- Test Parameters ---
     TEST_FILENAME = "advanced_automated_test.xlsx"
-    SUBJECTS_TO_CREATE = ["PYTHON PROGRAMMING"]
+    SUBJECTS_TO_CREATE = ["gh"]
     NUM_STUDENTS = 20
     NUM_SESSIONS_PER_SUBJECT = 30
 

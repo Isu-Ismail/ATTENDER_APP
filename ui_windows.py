@@ -1102,18 +1102,9 @@ class FinalResultDialog(ctk.CTkToplevel):
         # ... UI and logic for the calculator ...
 
 
-import threading
-import requests
-import time
-from datetime import date, datetime
-import customtkinter as ctk
-from tkinter import messagebox
-from config import ICON_PATH, resource_path
-from excel_helpers import count_student_rows
-
 
 class LiveSessionWindow(ctk.CTkToplevel):
-    """Window for managing a live OTP attendance session with manual refresh."""
+    """Window for managing a live OTP attendance session with automatic polling."""
     def __init__(self, master, sheet):
         super().__init__(master)
         self.title("Live Attendance Session")
@@ -1124,6 +1115,7 @@ class LiveSessionWindow(ctk.CTkToplevel):
         self.app = master
         self.sheet = sheet
         self.otp = None
+        self.is_polling = False # Flag to control the background thread
         self.all_students = self.app.get_student_list(self.sheet)
         self.all_rolls = self.app.get_complex_rolls(self.sheet)
 
@@ -1150,19 +1142,12 @@ class LiveSessionWindow(ctk.CTkToplevel):
         self.otp_label.grid(row=2, column=0, padx=10, pady=10)
         
         # --- Live List of Present Students ---
-        self.live_list_frame = ctk.CTkScrollableFrame(self, label_text="Present Students")
+        self.live_list_frame = ctk.CTkScrollableFrame(self, label_text="Present Students (Live)")
         self.live_list_frame.grid(row=3, column=0, padx=10, pady=10, sticky="nsew")
         
-        # --- Bottom Controls ---
-        bottom_frame = ctk.CTkFrame(self, fg_color="transparent")
-        bottom_frame.grid(row=4, column=0, padx=10, pady=10, sticky="ew")
-        bottom_frame.grid_columnconfigure(1, weight=1)
-        
-        self.refresh_button = ctk.CTkButton(bottom_frame, text="Refresh List", state="disabled", command=self.refresh_present_list)
-        self.refresh_button.grid(row=0, column=0, padx=(0,5))
-        
-        self.finish_button = ctk.CTkButton(bottom_frame, text="Finish Session & Save", state="disabled", command=self.finish_session)
-        self.finish_button.grid(row=0, column=1, padx=(5,0), sticky="ew")
+        # --- Finish Button (No Refresh Button) ---
+        self.finish_button = ctk.CTkButton(self, text="Finish Session & Save", state="disabled", command=self.finish_session)
+        self.finish_button.grid(row=4, column=0, padx=10, pady=20, sticky="ew")
         
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.update_ui_list([])
@@ -1182,9 +1167,8 @@ class LiveSessionWindow(ctk.CTkToplevel):
 
         self.start_button.configure(state="disabled", text="Session Active...")
         self.finish_button.configure(state="normal")
-        self.refresh_button.configure(state="normal")
         
-        api_url = "http://ismailisims.pythonanywhere.com/attendance/api/start-session/"
+        api_url = "https://ismailisims.pythonanywhere.com/attendance/api/start-session/"
         payload = {"teacher_username": "default_teacher", "subject_name": self.sheet.title, "valid_rolls": self.all_rolls}
         try:
             response = requests.post(api_url, json=payload, timeout=10)
@@ -1193,42 +1177,34 @@ class LiveSessionWindow(ctk.CTkToplevel):
             if data.get('status') == 'success':
                 self.otp = data.get('otp')
                 self.otp_label.configure(text=f"OTP: {self.otp}")
-                self.refresh_present_list()
+                # --- Start the automatic polling thread ---
+                self.is_polling = True
+                threading.Thread(target=self.poll_for_updates, daemon=True).start()
             else:
                 messagebox.showerror("API Error", data.get('message'), parent=self)
+                self.start_button.configure(state="normal", text="Start Session & Generate OTP")
         except requests.exceptions.RequestException as e:
             messagebox.showerror("Connection Error", f"Could not connect to server: {e}", parent=self)
             self.start_button.configure(state="normal", text="Start Session & Generate OTP")
 
-    def refresh_present_list(self):
-        """Starts a background thread to fetch the latest student list without freezing the UI."""
-        self.refresh_button.configure(state="disabled", text="Refreshing...")
-        threading.Thread(target=self._worker_get_list, daemon=True).start()
-
-    def _worker_get_list(self):
-        """The actual network call that runs in the background and handles feedback."""
-        if not self.otp:
-            self.app.after(0, self.refresh_button.configure, {"state": "normal", "text": "Refresh List"})
-            return
-        
-        api_url = f"http://ismailisims.pythonanywhere.com/attendance/api/get-present-list/?otp={self.otp}"
-        try:
-            response = requests.get(api_url, timeout=5)
-            response.raise_for_status()
-            data = response.json()
-            if data.get('status') == 'success':
-                present_students = data.get('present_students', [])
-                self.app.after(0, self.update_ui_list, present_students)
-                self.app.after(0, self.app.show_status, "Live list refreshed successfully.")
-            else:
-                error_message = data.get('message', 'Unknown API error')
-                self.app.after(0, self.app.show_status, f"Error: {error_message}", True)
-        except requests.exceptions.RequestException as e:
-            self.app.after(0, self.app.show_status, f"Connection Error: Could not refresh list.", True)
-            print(f"Connection error details: {e}")
-        finally:
-            # This block always runs, ensuring the button is re-enabled
-            self.app.after(0, self.refresh_button.configure, {"state": "normal", "text": "Refresh List"})
+    def poll_for_updates(self):
+        """Runs in a background thread, automatically polling the server for updates."""
+        while self.is_polling:
+            api_url = f"https://ismailisims.pythonanywhere.com/attendance/api/get-present-list/?otp={self.otp}"
+            try:
+                response = requests.get(api_url, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('status') == 'success':
+                        present_students = data.get('present_students', [])
+                        self.app.after(0, self.update_ui_list, present_students)
+                        if not data.get('is_active', True):
+                            self.is_polling = False
+                            self.app.after(0, self.session_expired_message)
+            except requests.exceptions.RequestException as e:
+                print(f"Polling connection error: {e}")
+            
+            time.sleep(10) # Poll every 5 seconds
 
     def update_ui_list(self, present_students):
         """Updates the listbox on the main GUI thread."""
@@ -1243,9 +1219,15 @@ class LiveSessionWindow(ctk.CTkToplevel):
             label_color = "#28a745" if is_present else "gray60"
             ctk.CTkLabel(self.live_list_frame, text=label_text, text_color=label_color, font=ctk.CTkFont(weight="bold" if is_present else "normal")).pack(anchor="w", padx=5)
 
+    def session_expired_message(self):
+        self.otp_label.configure(text="SESSION EXPIRED")
+        messagebox.showinfo("Session Expired", "The OTP has expired. Click Finish to save the results.", parent=self)
+
     def finish_session(self):
+        self.is_polling = False # Stop the polling thread
         self.finish_button.configure(state="disabled")
-        api_url = f"http://ismailisims.pythonanywhere.com/attendance/api/get-present-list/?otp={self.otp}"
+        
+        api_url = f"https://ismailisims.pythonanywhere.com/attendance/api/get-present-list/?otp={self.otp}"
         try:
             response = requests.get(api_url, timeout=5)
             data = response.json()
@@ -1260,16 +1242,17 @@ class LiveSessionWindow(ctk.CTkToplevel):
             success, msg = self.app.mark_attendance(self.sheet, len(self.all_students), absent_rolls_simple, num_hours, date_str)
             if success:
                 messagebox.showinfo("Success", "Attendance has been saved to the Excel file.", parent=self)
-                self.destroy()
+                self.on_close(finish_session_on_server=False) # Already finished, just close
             else:
                 messagebox.showerror("Error", f"Failed to save to Excel: {msg}", parent=self)
         except requests.exceptions.RequestException as e:
             messagebox.showerror("Connection Error", f"Could not get final list: {e}", parent=self)
             self.finish_button.configure(state="normal")
     
-    def on_close(self):
-        if self.otp:
-            api_url = "http://ismailisims.pythonanywhere.com/attendance/api/finish-session/"
+    def on_close(self, finish_session_on_server=True):
+        self.is_polling = False # Ensure polling stops
+        if self.otp and finish_session_on_server:
+            api_url = "https://ismailisims.pythonanywhere.com/attendance/api/finish-session/"
             try:
                 threading.Thread(target=lambda: requests.post(api_url, json={'otp': self.otp}, timeout=3), daemon=True).start()
             except: pass

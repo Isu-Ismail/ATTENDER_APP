@@ -9,38 +9,48 @@ on:
 
 jobs:
   build-exe-and-installer:
+    # Runs only if the commit message contains "build"
     if: "contains(github.event.head_commit.message, 'build')"
+    
+    # Use a Windows machine
     runs-on: windows-latest
     
+    # Give the job permission to create a GitHub Release
     permissions:
       contents: write
 
     steps:
+      # 1. Get your code
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           cache: 'pip'
+          # This line speeds up builds by caching your requirements.txt
+          cache-dependency-path: 'requirements.txt'
 
+      # 3. Install Python packages (will be fast if cached)
       - name: Install Python dependencies
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
 
+      # 4. Build the .exe with PyInstaller
       - name: Build executable with PyInstaller
         run: |
           pyinstaller --noconfirm --onefile --windowed --icon="app.ico" --name="attender" "main.py"
 
-      # --- THIS IS THE UPDATED STEP ---
-      # This path now points to the makensis.exe inside the
-      # .tools/NSIS/ folder you just uploaded.
+      # 5. Build the setup.exe with your local NSIS
       - name: Create installer with NSIS
         run: |
+          # This runs the 'makensis.exe' from your .tools folder
           ./.tools/NSIS/makensis.exe installer.nsi
           
+      # 6. Create a version number for this build
       - name: Set up version tag
         id: version
         run: |
@@ -48,6 +58,7 @@ jobs:
           echo "version_tag=$version" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
+      # 7. Create the GitHub Release and upload the installer
       - name: Create GitHub Release and Upload Installer
         uses: softprops/action-gh-release@v2
         with:

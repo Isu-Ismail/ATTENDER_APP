@@ -1,76 +1,50 @@
 # .github/workflows/build.yml
-# This is the main workflow file for GitHub Actions.
-# It MUST be placed in a folder named .github/workflows/
-# So the full path in your repo will be: .github/workflows/build.yml
 
 name: Build Windows Installer
 
 on:
   push:
     branches:
-      - main  # Triggers on any push to the 'main' branch
+      - main
 
 jobs:
   build-exe-and-installer:
-    # This 'if' condition is the magic!
-    # It checks if the LATEST commit message on the push contains the word 'build'.
-    # If you push 3 commits, it only checks the very last one.
     if: "contains(github.event.head_commit.message, 'build')"
-    
-    # We must use a Windows runner to build a Windows .exe and installer
     runs-on: windows-latest
     
-    # --- THIS IS THE NEW BLOCK ---
-    # This explicitly gives the workflow permission to
-    # write to your repo (to create the release).
+    # Permissions to allow creating releases
     permissions:
       contents: write
-    # -----------------------------
 
     steps:
-      # 1. Checks out your repository code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Sets up the Python version you need
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # Feel free to change this to your Python version
+          python-version: '3.10'
           cache: 'pip'
 
-      # 3. Installs your project's Python dependencies
       - name: Install Python dependencies
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
 
-      # 4. Runs PyInstaller to create the 'attender.exe'
-      #    --noconfirm: Overwrites old builds
-      #    --onefile: Bundles everything into a single .exe
-      #    --windowed: No console window (you specified --noconsole)
-      #    --icon: Uses your app.ico
-      #    --name: Names the final .exe 'attender.exe'
       - name: Build executable with PyInstaller
         run: |
           pyinstaller --noconfirm --onefile --windowed --icon="app.ico" --name="attender" "main.py"
 
-      # 5. Sets up the NSIS (Nullsoft Scriptable Install System) tool
+      # --- FIX IS HERE ---
+      # Switched to the reliable 'joncloud' action
       - name: Set up NSIS
-        uses: iccb1013/setup-nsis@v3
-        
-      # 6. Runs the NSIS compiler using the 'installer.nsi' script
-      #    This script (which is the *second* file I'm giving you)
-      #    tells NSIS what to do.
+        uses: joncloud/setup-nsis@v1
+      # -------------------
+
       - name: Create installer with NSIS
         run: |
-          # This command builds the installer.
-          # It will automatically find and use your 'installer.nsi' file.
           makensis installer.nsi
           
-      # 7. Create a dynamic version number
-      #    We'll use the format v1.0.[GitHub Run Number]
-      #    e.g., v1.0.1, v1.0.2, etc.
       - name: Set up version tag
         id: version
         run: |
@@ -78,16 +52,10 @@ jobs:
           echo "version_tag=$version" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
-      # 8. Creates a new 'Release' on your GitHub project
-      #    and uploads the 'attender-setup.exe' as a download.
       - name: Create GitHub Release and Upload Installer
         uses: softprops/action-gh-release@v2
         with:
-          # This creates a new tag in your repo for this version
           tag_name: ${{ steps.version.outputs.version_tag }}
-          # This is the title of the release
           name: "Release ${{ steps.version.outputs.version_tag }}"
-          # This tells the action which files to upload.
-          # The installer.nsi script is configured to output the file here.
           files: |
             dist/attender-setup.exe

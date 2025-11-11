@@ -16,9 +16,9 @@ def run_advanced_test():
 
     # --- Test Parameters ---
     TEST_FILENAME = "advanced_automated_test.xlsx"
-    SUBJECTS_TO_CREATE = ["gh"]
-    NUM_STUDENTS = 20
-    NUM_SESSIONS_PER_SUBJECT = 30
+    SUBJECTS_TO_CREATE = ["QTM"]
+    NUM_STUDENTS = 100
+    NUM_SESSIONS_PER_SUBJECT = 100
 
     # --- 1. Clean up previous test file ---
     test_file_path = os.path.join(USER_DATA_PATH, TEST_FILENAME)

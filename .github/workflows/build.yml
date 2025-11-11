@@ -12,7 +12,6 @@ jobs:
     if: "contains(github.event.head_commit.message, 'build')"
     runs-on: windows-latest
     
-    # Permissions to allow creating releases
     permissions:
       contents: write
 
@@ -35,15 +34,12 @@ jobs:
         run: |
           pyinstaller --noconfirm --onefile --windowed --icon="app.ico" --name="attender" "main.py"
 
-      # --- FIX IS HERE ---
-      # Switched to the reliable 'joncloud' action
-      - name: Set up NSIS
-        uses: joncloud/setup-nsis@v1
-      # -------------------
-
+      # --- THIS IS THE UPDATED STEP ---
+      # This path now points to the makensis.exe inside the
+      # .tools/NSIS/ folder you just uploaded.
       - name: Create installer with NSIS
         run: |
-          makensis installer.nsi
+          ./.tools/NSIS/makensis.exe installer.nsi
           
       - name: Set up version tag
         id: version
@@ -59,5 +55,3 @@ jobs:
           name: "Release ${{ steps.version.outputs.version_tag }}"
           files: |
             dist/attender-setup.exe
-
-            

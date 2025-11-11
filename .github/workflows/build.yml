@@ -59,3 +59,5 @@ jobs:
           name: "Release ${{ steps.version.outputs.version_tag }}"
           files: |
             dist/attender-setup.exe
+
+            

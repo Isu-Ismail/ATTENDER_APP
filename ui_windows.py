@@ -5,9 +5,6 @@ import os
 from datetime import date, datetime
 from config import ICON_PATH, resource_path, USER_DATA_PATH
 from excel_helpers import count_student_rows
-import threading
-import requests
-import time
 
 class LowAttendanceWindow(ctk.CTkToplevel):
     """Interactive window to generate low attendance reports."""
@@ -215,8 +212,12 @@ class ManageWindow(ctk.CTkToplevel):
         try:
             sheet = self.app.wb[selected_subject]
             # Get data from Column B (Names) and C (Roll Numbers)
-            names = [str(sheet.cell(row=row, column=2).value or '') for row in range(5, count_student_rows(sheet) + 5)]
-            rolls = [str(sheet.cell(row=row, column=3).value or '') for row in range(5, count_student_rows(sheet) + 5)]
+            header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+            start_row = header_row + 1
+            num_students = count_student_rows(sheet)
+            
+            names = [str(sheet.cell(row=row, column=2).value or '') for row in range(start_row, num_students + start_row)]
+            rolls = [str(sheet.cell(row=row, column=3).value or '') for row in range(start_row, num_students + start_row)]
             
             # Insert data into the correct textboxes
             self.names_textbox.insert("1.0", "\n".join(names))
@@ -254,15 +255,18 @@ class ManageWindow(ctk.CTkToplevel):
         
         try:
             sheet = self.app.wb[selected_subject]
+            header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+            start_row = header_row + 1
+
             # Clear old student data from columns A, B, and C
-            for row in range(5, sheet.max_row + 5):
+            for row in range(start_row, sheet.max_row + 1):
                 for col in range(1, 4): sheet.cell(row=row, column=col).value = None
             
             # Write new student data from the two textboxes
             for i in range(len(student_names)):
-                sheet.cell(row=i+5, column=1).value = i + 1              # Simple Roll No.
-                sheet.cell(row=i+5, column=2).value = student_names[i]   # Name
-                sheet.cell(row=i+5, column=3).value = student_rolls[i]   # Complex Roll No.
+                sheet.cell(row=i+start_row, column=1).value = i + 1              # Simple Roll No.
+                sheet.cell(row=i+start_row, column=2).value = student_names[i]   # Name
+                sheet.cell(row=i+start_row, column=3).value = student_rolls[i]   # Complex Roll No.
             
             self.app.apply_standard_styles(sheet, len(student_names))
             self.app.wb.save(os.path.join(USER_DATA_PATH, self.current_filename))
@@ -560,7 +564,7 @@ class BulkEntryWindow(ctk.CTkToplevel):
         self.grid_rowconfigure(2, weight=1)
         
         ctk.CTkLabel(self, text="Paste or type attendance data below.", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=20, pady=(20, 5), sticky="w")
-        ctk.CTkLabel(self, text="Format: DATE:HOURS:ABSENTEE_ROLLS (e.g., 08-08-2025:2:1,3,5)", text_color="gray").grid(row=1, column=0, padx=20, pady=(0, 10), sticky="w")
+        ctk.CTkLabel(self, text="Format: DATE:PERIODS:HOURS:ROLLS (e.g., 08-08-2025:1,2:2:1,3,5)", text_color="gray").grid(row=1, column=0, padx=20, pady=(0, 10), sticky="w")
         
         self.input_textbox = ctk.CTkTextbox(self, font=("", 14), height=150)
         self.input_textbox.grid(row=2, column=0, padx=20, pady=5, sticky="nsew")
@@ -618,11 +622,11 @@ class BulkEntryWindow(ctk.CTkToplevel):
             self.log_message(f"\nProcessing line {i+1}: '{line}'")
             try:
                 parts = line.split(':')
-                if len(parts) != 3:
-                    self.log_message("  -> ERROR: Invalid format. Must be DATE:HOURS:ROLLS.")
+                if len(parts) != 4:
+                    self.log_message("  -> ERROR: Invalid format. Must be DATE:PERIODS:HOURS:ROLLS.")
                     continue
                 
-                date_input, hours_str, rolls_str = [p.strip() for p in parts]
+                date_input, periods_str, hours_str, rolls_str = [p.strip() for p in parts]
                 
                 # --- NEW: Use the smart date parser ---
                 date_str = self._parse_date(date_input)
@@ -652,7 +656,7 @@ class BulkEntryWindow(ctk.CTkToplevel):
                         self.log_message(f"  -> SKIPPED: User chose not to overwrite date {date_str}.")
                         continue
 
-                success, message = self.app.mark_attendance(self.sheet, total_students, parsed_rolls, num_hours, date_str, overwrite_col=existing_date_col)
+                success, message = self.app.mark_attendance(self.sheet, total_students, parsed_rolls, num_hours, date_str, periods=periods_str, overwrite_col=existing_date_col)
                 self.log_message(f"  -> STATUS: {message}")
 
             except Exception as e:
@@ -687,13 +691,13 @@ class BulkEntryWindow(ctk.CTkToplevel):
 
             self.log_message(f"\nProcessing line {i+1}: '{line}'")
 
-            # 1. Validate the overall format (must have 3 parts separated by ':')
+            # 1. Validate the overall format (must have 4 parts separated by ':')
             parts = line.split(':')
-            if len(parts) != 3:
-                self.log_message("  -> ERROR: Invalid format. Expected DATE:HOURS:ROLLS.")
+            if len(parts) != 4:
+                self.log_message("  -> ERROR: Invalid format. Expected DATE:PERIODS:HOURS:ROLLS.")
                 continue
             
-            date_input, hours_str, rolls_str = [p.strip() for p in parts]
+            date_input, periods_str, hours_str, rolls_str = [p.strip() for p in parts]
 
             # 2. Validate the Date
             date_str = self._parse_date(date_input)
@@ -740,7 +744,7 @@ class BulkEntryWindow(ctk.CTkToplevel):
                     continue
 
             # If all validations pass, call the main mark_attendance function
-            success, message = self.app.mark_attendance(self.sheet, total_students, parsed_rolls, num_hours, date_str, overwrite_col=existing_date_col)
+            success, message = self.app.mark_attendance(self.sheet, total_students, parsed_rolls, num_hours, date_str, periods=periods_str, overwrite_col=existing_date_col)
             self.log_message(f"  -> STATUS: {message}")
         
         self.log_message("\n--- Bulk processing complete! ---")
@@ -1096,157 +1100,3 @@ class FinalResultDialog(ctk.CTkToplevel):
             messagebox.showerror("Error", message, parent=self)
         # ... UI and logic for the calculator ...
 
-class LiveSessionWindow(ctk.CTkToplevel):
-    """Window for managing a live OTP attendance session with automatic polling."""
-    def __init__(self, master, sheet):
-        super().__init__(master)
-        self.title("Live Attendance Session")
-        self.geometry("450x600")
-        self.transient(master)
-        self.focus()
-
-        self.app = master
-        self.sheet = sheet
-        self.otp = None
-        self.is_polling = False # Flag to control the background thread
-        self.all_students = self.app.get_student_list(self.sheet)
-        self.all_rolls = self.app.get_complex_rolls(self.sheet)
-
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
-        
-        # --- Top Controls ---
-        top_frame = ctk.CTkFrame(self)
-        top_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
-        top_frame.grid_columnconfigure(1, weight=1)
-        
-        ctk.CTkLabel(top_frame, text="Date:").grid(row=0, column=0, padx=(10,5), pady=5, sticky="w")
-        self.date_entry = ctk.CTkEntry(top_frame)
-        self.date_entry.grid(row=0, column=1, padx=(0,10), pady=5, sticky="ew")
-        self.date_entry.insert(0, date.today().strftime("%d-%m-%Y"))
-        ctk.CTkLabel(top_frame, text="Hours:").grid(row=1, column=0, padx=(10,5), pady=5, sticky="w")
-        self.hours_entry = ctk.CTkEntry(top_frame)
-        self.hours_entry.grid(row=1, column=1, padx=(0,10), pady=5, sticky="ew")
-
-        self.start_button = ctk.CTkButton(self, text="Start Session & Generate OTP", command=self.start_session)
-        self.start_button.grid(row=1, column=0, padx=10, pady=10)
-        
-        self.otp_label = ctk.CTkLabel(self, text="OTP will appear here", font=ctk.CTkFont(size=28, weight="bold"))
-        self.otp_label.grid(row=2, column=0, padx=10, pady=10)
-        
-        # --- Live List of Present Students ---
-        self.live_list_frame = ctk.CTkScrollableFrame(self, label_text="Present Students (Live)")
-        self.live_list_frame.grid(row=3, column=0, padx=10, pady=10, sticky="nsew")
-        
-        # --- Finish Button (No Refresh Button) ---
-        self.finish_button = ctk.CTkButton(self, text="Finish Session & Save", state="disabled", command=self.finish_session)
-        self.finish_button.grid(row=4, column=0, padx=10, pady=20, sticky="ew")
-        
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.update_ui_list([])
-
-    def start_session(self):
-        date_str = self.date_entry.get()
-        hours_str = self.hours_entry.get()
-        try: datetime.strptime(date_str, "%d-%m-%Y")
-        except ValueError: return messagebox.showerror("Error", "Invalid date format. Use DD-MM-YYYY.", parent=self)
-        try:
-            num_hours = int(hours_str)
-            if not 1 <= num_hours <= 8: return messagebox.showerror("Error", "Hours must be between 1 and 8.", parent=self)
-        except (ValueError, TypeError): return messagebox.showerror("Error", "Hours must be a valid number.", parent=self)
-        for col in range(4, self.sheet.max_column + 2):
-            if self.sheet.cell(row=2, column=col).value == date_str:
-                return messagebox.showerror("Error", "Attendance for this date has already been marked.", parent=self)
-
-        self.start_button.configure(state="disabled", text="Session Active...")
-        self.finish_button.configure(state="normal")
-        
-        api_url = "https://ismailisims.pythonanywhere.com/attendance/api/start-session/"
-        payload = {"teacher_username": "default_teacher", "subject_name": self.sheet.title, "valid_rolls": self.all_rolls}
-        try:
-            response = requests.post(api_url, json=payload, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            if data.get('status') == 'success':
-                self.otp = data.get('otp')
-                self.otp_label.configure(text=f"OTP: {self.otp}")
-                # --- Start the automatic polling thread ---
-                self.is_polling = True
-                threading.Thread(target=self.poll_for_updates, daemon=True).start()
-            else:
-                messagebox.showerror("API Error", data.get('message'), parent=self)
-                self.start_button.configure(state="normal", text="Start Session & Generate OTP")
-        except requests.exceptions.RequestException as e:
-            messagebox.showerror("Connection Error", f"Could not connect to server: {e}", parent=self)
-            self.start_button.configure(state="normal", text="Start Session & Generate OTP")
-
-    def poll_for_updates(self):
-        """Runs in a background thread, automatically polling the server for updates."""
-        while self.is_polling:
-            api_url = f"https://ismailisims.pythonanywhere.com/attendance/api/get-present-list/?otp={self.otp}"
-            try:
-                response = requests.get(api_url, timeout=5)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('status') == 'success':
-                        present_students = data.get('present_students', [])
-                        self.app.after(0, self.update_ui_list, present_students)
-                        if not data.get('is_active', True):
-                            self.is_polling = False
-                            self.app.after(0, self.session_expired_message)
-            except requests.exceptions.RequestException as e:
-                print(f"Polling connection error: {e}")
-            
-            time.sleep(10) # Poll every 5 seconds
-
-    def update_ui_list(self, present_students):
-        """Updates the listbox on the main GUI thread."""
-        for widget in self.live_list_frame.winfo_children():
-            widget.destroy()
-        
-        self.live_list_frame.configure(label_text=f"Present Students ({len(present_students)} / {len(self.all_students)})")
-        present_rolls_set = set(present_students)
-        for name, roll in zip(self.all_students, self.all_rolls):
-            is_present = roll in present_rolls_set
-            label_text = f"{name} ({roll})"
-            label_color = "#28a745" if is_present else "gray60"
-            ctk.CTkLabel(self.live_list_frame, text=label_text, text_color=label_color, font=ctk.CTkFont(weight="bold" if is_present else "normal")).pack(anchor="w", padx=5)
-
-    def session_expired_message(self):
-        self.otp_label.configure(text="SESSION EXPIRED")
-        messagebox.showinfo("Session Expired", "The OTP has expired. Click Finish to save the results.", parent=self)
-
-    def finish_session(self):
-        self.is_polling = False # Stop the polling thread
-        self.finish_button.configure(state="disabled")
-        
-        api_url = f"https://ismailisims.pythonanywhere.com/attendance/api/get-present-list/?otp={self.otp}"
-        try:
-            response = requests.get(api_url, timeout=5)
-            data = response.json()
-            present_rolls = set(data.get('present_students', []))
-            
-            roll_map = {roll: i + 1 for i, roll in enumerate(self.all_rolls)}
-            absent_rolls_simple = [roll_map[r] for r in self.all_rolls if r not in present_rolls]
-            
-            date_str = self.date_entry.get()
-            num_hours = int(self.hours_entry.get())
-            
-            success, msg = self.app.mark_attendance(self.sheet, len(self.all_students), absent_rolls_simple, num_hours, date_str)
-            if success:
-                messagebox.showinfo("Success", "Attendance has been saved to the Excel file.", parent=self)
-                self.on_close(finish_session_on_server=False) # Already finished, just close
-            else:
-                messagebox.showerror("Error", f"Failed to save to Excel: {msg}", parent=self)
-        except requests.exceptions.RequestException as e:
-            messagebox.showerror("Connection Error", f"Could not get final list: {e}", parent=self)
-            self.finish_button.configure(state="normal")
-    
-    def on_close(self, finish_session_on_server=True):
-        self.is_polling = False # Ensure polling stops
-        if self.otp and finish_session_on_server:
-            api_url = "https://ismailisims.pythonanywhere.com/attendance/api/finish-session/"
-            try:
-                threading.Thread(target=lambda: requests.post(api_url, json={'otp': self.otp}, timeout=3), daemon=True).start()
-            except: pass
-        self.destroy()

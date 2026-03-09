@@ -8,9 +8,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 from config import ICON_PATH, USER_DATA_PATH, resource_path
 from excel_helpers import count_student_rows
-from ui_windows import LowAttendanceWindow, ManageWindow, DetailedReportWindow,BulkEntryWindow, MarkEntryWindow, LiveSessionWindow
-import requests
-import threading
+from ui_windows import LowAttendanceWindow, ManageWindow, DetailedReportWindow,BulkEntryWindow, MarkEntryWindow
 
 # --- Main Application Class ---
 class AttendanceApp(ctk.CTk):
@@ -41,12 +39,12 @@ class AttendanceApp(ctk.CTk):
         # --- THIS IS THE FIX ---
         # Initialize all widget variables to None to prevent AttributeErrors
         self.file_combo = self.open_button = self.load_button = None
-        self.subject_combo = self.date_entry = self.hours_entry = None
+        self.subject_combo = self.date_entry = self.periods_entry = self.hours_entry = None
         self.mode_var = ctk.StringVar(value="absent") # This one needs to be created
         self.absent_btn = self.present_btn = self.rolls_entry = None
         self.submit_button = self.report_button = self.detailed_report_button = None
         self.bulk_entry_button = self.mark_entry_button = self.manage_button = None
-        self.live_session_button = self.status_frame = self.status_label = None
+        self.status_frame = self.status_label = None
 
         # --- 4. Build UI and Set Initial State ---
         self.setup_ui()
@@ -83,20 +81,23 @@ class AttendanceApp(ctk.CTk):
         self.date_entry = ctk.CTkEntry(self.main_frame, placeholder_text="DD-MM-YYYY")
         self.date_entry.grid(row=3, column=0, padx=10, pady=(0, 10), sticky="ew")
         self.date_entry.insert(0, date.today().strftime("%d-%m-%Y"))
-        ctk.CTkLabel(self.main_frame, text="Hours for Session", font=ctk.CTkFont(weight="bold")).grid(row=2, column=1, padx=10, pady=(10, 5), sticky="w")
+        ctk.CTkLabel(self.main_frame, text="Periods (comma-sep)", font=ctk.CTkFont(weight="bold")).grid(row=4, column=0, padx=10, pady=(10, 5), sticky="w")
+        self.periods_entry = ctk.CTkEntry(self.main_frame, placeholder_text="e.g., 1, 2")
+        self.periods_entry.grid(row=5, column=0, padx=10, pady=(0, 10), sticky="ew")
+        ctk.CTkLabel(self.main_frame, text="Hours for Session", font=ctk.CTkFont(weight="bold")).grid(row=4, column=1, padx=10, pady=(10, 5), sticky="w")
         self.hours_entry = ctk.CTkEntry(self.main_frame, placeholder_text="e.g., 2")
-        self.hours_entry.grid(row=3, column=1, padx=10, pady=(0, 10), sticky="ew")
-        ctk.CTkLabel(self.main_frame, text="Mark by listing:", font=ctk.CTkFont(weight="bold")).grid(row=4, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
+        self.hours_entry.grid(row=5, column=1, padx=10, pady=(0, 10), sticky="ew")
+        ctk.CTkLabel(self.main_frame, text="Mark by listing:", font=ctk.CTkFont(weight="bold")).grid(row=6, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
         self.mode_var = ctk.StringVar(value="absent")
         mode_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        mode_frame.grid(row=5, column=0, columnspan=2, padx=10, pady=(0, 5), sticky="ew")
+        mode_frame.grid(row=7, column=0, columnspan=2, padx=10, pady=(0, 5), sticky="ew")
         self.absent_btn = ctk.CTkRadioButton(mode_frame, text="Absentees", variable=self.mode_var, value="absent")
         self.absent_btn.pack(side="left")
         self.present_btn = ctk.CTkRadioButton(mode_frame, text="Presentees", variable=self.mode_var, value="present")
         self.present_btn.pack(side="left", padx=20)
-        ctk.CTkLabel(self.main_frame, text="Enter Roll Numbers (comma-separated)", font=ctk.CTkFont(weight="bold")).grid(row=6, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
+        ctk.CTkLabel(self.main_frame, text="Enter Roll Numbers (comma-separated)", font=ctk.CTkFont(weight="bold")).grid(row=8, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
         self.rolls_entry = ctk.CTkEntry(self.main_frame, placeholder_text="e.g., 2, 4, 9")
-        self.rolls_entry.grid(row=7, column=0, columnspan=2, padx=10, pady=(0, 20), sticky="ew")
+        self.rolls_entry.grid(row=9, column=0, columnspan=2, padx=10, pady=(0, 20), sticky="ew")
 
         self.submit_button = ctk.CTkButton(content_frame, text="Mark Attendance", command=self.validate_and_submit)
         self.submit_button.grid(row=1, column=0, pady=(10, 5), sticky="ew")
@@ -119,9 +120,6 @@ class AttendanceApp(ctk.CTk):
         
         self.manage_button = ctk.CTkButton(content_frame, text="Manage Subjects & Students", command=self.open_manage_window)
         self.manage_button.grid(row=4, column=0, pady=5, sticky="ew")
-
-        self.live_session_button = ctk.CTkButton(content_frame, text="Start Live OTP Session", fg_color="green", hover_color="#006400", command=self.open_live_session_window)
-        self.live_session_button.grid(row=5, column=0, pady=(5,10), sticky="ew")
 
         # --- Status frame (not scrollable) ---
         self.status_frame = ctk.CTkFrame(self)
@@ -148,37 +146,43 @@ class AttendanceApp(ctk.CTk):
 
     def get_student_list(self, sheet):
         """Gets a list of all student names from the sheet."""
-        return [str(sheet.cell(row=row, column=2).value) for row in range(5, count_student_rows(sheet) + 5) if sheet.cell(row=row, column=2).value]
+        start_row = 6 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 5
+        return [str(sheet.cell(row=row, column=2).value) for row in range(start_row, count_student_rows(sheet) + start_row) if sheet.cell(row=row, column=2).value]
 
     def _find_percentage_col(self, sheet):
         """Helper to find the last PERCENTAGE column."""
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
         for col in range(sheet.max_column, 3, -1):
-            if sheet.cell(row=4, column=col).value == "PERCENTAGE":
+            if sheet.cell(row=header_row, column=col).value == "PERCENTAGE":
                 return col
         return None
 
     def get_assessment_list(self, sheet):
         """Finds all assessment columns (those after the fixed summary block)."""
         assessments = []
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+        sub_header_row = 4 if header_row == 5 else 3
         # Assessments start after the fixed summary block (after column Z=26)
         for col in range(27, self._find_true_last_column(sheet) + 2):
-            header = sheet.cell(row=4, column=col).value
-            max_mark_header = sheet.cell(row=3, column=col).value
+            header = sheet.cell(row=header_row, column=col).value
+            max_mark_header = sheet.cell(row=sub_header_row, column=col).value
             if header and max_mark_header:
                 assessments.append(header.strip())
         return sorted(list(set(assessments)))
 
     def get_marks_for_assessment(self, sheet, assessment_name):
         """Gets a list of marks for a given assessment column."""
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+        start_row = header_row + 1
         col_idx = None
         for col in range(1, sheet.max_column + 1):
-            if sheet.cell(row=4, column=col).value == assessment_name:
+            if sheet.cell(row=header_row, column=col).value == assessment_name:
                 col_idx = col
                 break
         if not col_idx: return []
         
         num_students = count_student_rows(sheet)
-        return [str(sheet.cell(row, col_idx).value or '') for row in range(5, num_students + 5)]
+        return [str(sheet.cell(row, col_idx).value or '') for row in range(start_row, num_students + start_row)]
 
     def add_new_assessment_column(self, sheet, name, max_marks):
         """Adds a new assessment column and safely removes any old final result column."""
@@ -193,8 +197,9 @@ class AttendanceApp(ctk.CTk):
 
         # --- NEW: Specifically find and delete the "FINAL RESULT" column ---
         final_result_col = None
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
         for col in range(sheet.max_column, 3, -1):
-            if sheet.cell(row=4, column=col).value == "FINAL RESULT":
+            if sheet.cell(row=header_row, column=col).value == "FINAL RESULT":
                 final_result_col = col
                 break
         
@@ -206,12 +211,15 @@ class AttendanceApp(ctk.CTk):
         
         new_col = self._find_true_last_column(sheet) + 1
         
-        sheet.cell(row=3, column=new_col).value = f"Out of: {max_marks}"
-        sheet.cell(row=4, column=new_col).value = name.upper()
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+        sub_header_row = header_row - 1
+        
+        sheet.cell(row=sub_header_row, column=new_col).value = f"Out of: {max_marks}"
+        sheet.cell(row=header_row, column=new_col).value = name.upper()
         header_font = Font(bold=True, name='Calibri', color="FFFFFF")
         header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-        sheet.cell(row=4, column=new_col).font = header_font
-        sheet.cell(row=4, column=new_col).fill = header_fill
+        sheet.cell(row=header_row, column=new_col).font = header_font
+        sheet.cell(row=header_row, column=new_col).fill = header_fill
 
         self.apply_standard_styles(sheet, count_student_rows(sheet))
         self.wb.save(os.path.join(USER_DATA_PATH, self.current_filename))
@@ -227,8 +235,10 @@ class AttendanceApp(ctk.CTk):
         if not col_idx: return False, "Could not find the assessment column."
 
         try:
+            header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+            start_row = header_row + 1
             for i, mark in enumerate(marks_list):
-                sheet.cell(row=i + 5, column=col_idx).value = mark
+                sheet.cell(row=i + start_row, column=col_idx).value = mark
             
             self.wb.save(os.path.join(USER_DATA_PATH, self.current_filename))
             return True, f"Marks for '{assessment_name}' saved successfully."
@@ -237,9 +247,11 @@ class AttendanceApp(ctk.CTk):
 
     def get_max_marks(self, sheet, assessment_name):
         """Finds the 'Out of: XX' value for a given assessment."""
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+        sub_header_row = header_row - 1
         for col in range(1, sheet.max_column + 1):
-            if sheet.cell(row=4, column=col).value == assessment_name:
-                max_mark_str = str(sheet.cell(row=3, column=col).value or '').replace('Out of: ', '')
+            if sheet.cell(row=header_row, column=col).value == assessment_name:
+                max_mark_str = str(sheet.cell(row=sub_header_row, column=col).value or '').replace('Out of: ', '')
                 try:
                     return int(max_mark_str)
                 except: return None
@@ -303,9 +315,11 @@ class AttendanceApp(ctk.CTk):
 
     def convert_marks(self, sheet, assessment_name, current_max, new_max):
         """Converts all marks in a column from one scale to another."""
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+        sub_header_row = header_row - 1
         col_idx = None
         for col in range(1, sheet.max_column + 1):
-            if sheet.cell(row=4, column=col).value == assessment_name:
+            if sheet.cell(row=header_row, column=col).value == assessment_name:
                 col_idx = col
                 break
         if not col_idx: return False, "Could not find assessment column."
@@ -321,7 +335,7 @@ class AttendanceApp(ctk.CTk):
                     cell.value = new_mark
             
             # Update the max mark header
-            sheet.cell(row=3, column=col_idx).value = f"Out of: {new_max}"
+            sheet.cell(row=sub_header_row, column=col_idx).value = f"Out of: {new_max}"
             self.wb.save(os.path.join(USER_DATA_PATH, self.current_filename))
             return True, "Marks converted successfully."
         except Exception as e:
@@ -332,8 +346,9 @@ class AttendanceApp(ctk.CTk):
         try:
             # First, delete any pre-existing "FINAL RESULT" column to ensure a clean slate
             final_result_col = None
+            header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
             for col in range(sheet.max_column, 3, -1):
-                if sheet.cell(row=4, column=col).value == "FINAL RESULT":
+                if sheet.cell(row=header_row, column=col).value == "FINAL RESULT":
                     final_result_col = col
                     break
             if final_result_col:
@@ -354,7 +369,8 @@ class AttendanceApp(ctk.CTk):
             final_header_cell.font, final_header_cell.fill = header_font, header_fill
             
             num_students = count_student_rows(sheet)
-            for row in range(5, num_students + 5):
+            start_row = header_row + 1
+            for row in range(start_row, num_students + start_row):
                 final_score = 0.0
                 for name, weight in weights_dict.items():
                     data = assessment_data[name]
@@ -376,10 +392,10 @@ class AttendanceApp(ctk.CTk):
         self.status_frame.grid(row=6, column=0, padx=20, pady=(10, 10), sticky="ew")
         
     def set_main_controls_state(self, state="normal", allow_manage=False):
-        widgets = [self.subject_combo, self.date_entry, self.hours_entry, self.rolls_entry, 
+        widgets = [self.subject_combo, self.date_entry, self.periods_entry, self.hours_entry, self.rolls_entry, 
                    self.submit_button, self.report_button, self.detailed_report_button, 
                    self.bulk_entry_button, self.mark_entry_button, self.absent_btn, 
-                   self.present_btn, self.live_session_button]
+                   self.present_btn]
         for widget in widgets: widget.configure(state=state)
         self.manage_button.configure(state="normal" if state == "normal" or allow_manage else "disabled")
     
@@ -407,19 +423,19 @@ class AttendanceApp(ctk.CTk):
         title_cell.alignment = Alignment(horizontal='center', vertical='center')
         
         # Static Labels
-        sheet['B2'].value, sheet['B3'].value = "DATE :", "Hours Taken :"
-        for cell_ref in ['B2', 'B3']: sheet[cell_ref].font = Font(bold=True)
+        sheet['B2'].value, sheet['B3'].value, sheet['B4'].value = "DATE :", "PERIODS :", "Hours Taken :"
+        for cell_ref in ['B2', 'B3', 'B4']: sheet[cell_ref].font = Font(bold=True)
         
         # Main table headers for student info
-        main_headers = {'A4': 'ROLL NO.', 'B4': 'NAME', 'C4': 'ROLL NUMBER'}
+        main_headers = {'A5': 'ROLL NO.', 'B5': 'NAME', 'C5': 'ROLL NUMBER'}
         for cell_ref, text in main_headers.items():
             cell = sheet[cell_ref]
             cell.value, cell.font, cell.fill = text, header_font, header_fill
         
         # --- Create the FIXED summary headers starting at Column W ---
         summary_headers = {
-            'W4': 'TOTAL HOURS', 'X4': 'HOURS PRESENT',
-            'Y4': 'HOURS ABSENT', 'Z4': 'PERCENTAGE'
+            'W5': 'TOTAL HOURS', 'X5': 'HOURS PRESENT',
+            'Y5': 'HOURS ABSENT', 'Z5': 'PERCENTAGE'
         }
         for cell_ref, text in summary_headers.items():
             cell = sheet[cell_ref]
@@ -433,6 +449,17 @@ class AttendanceApp(ctk.CTk):
         left_align = Alignment(horizontal='left', vertical='center', wrap_text=True)
         thin_side = Side(border_style="thin", color="000000")
         full_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+        
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+        
+        # Ensure table headers are present and formatted
+        header_font = Font(bold=True, name='Calibri', color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        
+        main_headers = {f'A{header_row}': 'S.NO.', f'B{header_row}': 'NAME', f'C{header_row}': 'ROLL NUMBER'}
+        for cell_ref, text in main_headers.items():
+            cell = sheet[cell_ref]
+            cell.value, cell.font, cell.fill = text, header_font, header_fill
 
         last_col = self._find_true_last_column(sheet)
         
@@ -454,22 +481,26 @@ class AttendanceApp(ctk.CTk):
                     sheet.column_dimensions[col_letter].width = 15
 
         # Apply borders and alignment to the entire data area
-        for row_idx in range(1, num_students + 5):
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+        start_row = header_row + 1
+        for row_idx in range(1, num_students + start_row):
             for col_idx in range(1, last_col + 1):
                 cell = sheet.cell(row=row_idx, column=col_idx)
                 cell.border = full_border
                 cell.alignment = center_align
         
         # Re-apply specific left-alignment for the student names
-        for row_idx in range(5, num_students + 5):
+        for row_idx in range(start_row, num_students + start_row):
             sheet.cell(row=row_idx, column=2).alignment = left_align
  
     def _find_true_last_column(self, sheet):
         """Calculates the last column that contains actual header data by scanning backwards."""
         for col in range(256, 3, -1):
             if (sheet.cell(row=1, column=col).value or
+                sheet.cell(row=2, column=col).value or
                 sheet.cell(row=3, column=col).value or
-                sheet.cell(row=4, column=col).value):
+                sheet.cell(row=4, column=col).value or
+                sheet.cell(row=5, column=col).value):
                 return col
         return 26 
 
@@ -517,8 +548,11 @@ class AttendanceApp(ctk.CTk):
                 continue
 
             present_count, absent_count = 0, 0
-            hours = sheet.cell(row=3, column=date_col).value or "N/A"
-            for row in range(5, count_student_rows(sheet) + 5):
+            header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+            hours_row = 4 if header_row == 5 else 3
+            start_row = header_row + 1
+            hours = sheet.cell(row=hours_row, column=date_col).value or "N/A"
+            for row in range(start_row, count_student_rows(sheet) + start_row):
                 status = sheet.cell(row=row, column=date_col).value
                 if status == 'P':
                     present_count += 1
@@ -543,7 +577,9 @@ class AttendanceApp(ctk.CTk):
             summary_cols["HOURS ABSENT"] = perc_col - 1
             summary_cols["HOURS PRESENT"] = perc_col - 2
         
-        name_to_row = {str(sheet.cell(row, 2).value).upper(): row for row in range(5, count_student_rows(sheet) + 5)}
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+        start_row = header_row + 1
+        name_to_row = {str(sheet.cell(row, 2).value).upper(): row for row in range(start_row, count_student_rows(sheet) + start_row)}
         
         report_lines = []
         for name in names_list:
@@ -617,7 +653,9 @@ class AttendanceApp(ctk.CTk):
         """Gets a list of students below a certain attendance percentage."""
         percentage_col = self._find_percentage_col(sheet)
         low_attendance_students = []
-        for row in range(5, count_student_rows(sheet) + 5):
+        header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+        start_row = header_row + 1
+        for row in range(start_row, count_student_rows(sheet) + start_row):
             name_cell = sheet.cell(row=row, column=2)
             if not name_cell.value: continue
             percent_str = str(sheet.cell(row=row, column=percentage_col).value).replace('%', '')
@@ -639,6 +677,7 @@ class AttendanceApp(ctk.CTk):
             datetime.strptime(date_str, "%d-%m-%Y")
         except ValueError: return self.show_status("Invalid date format. Use DD-MM-YYYY.", is_error=True)
         try:
+            periods_str = self.periods_entry.get().strip()
             num_hours = int(self.hours_entry.get())
             if not 1 <= num_hours <= 8: return self.show_status("Hours must be 1-8.", is_error=True)
         except (ValueError, TypeError): return self.show_status("Hours must be a whole number.", is_error=True)
@@ -685,9 +724,9 @@ class AttendanceApp(ctk.CTk):
         # The final confirmation message before marking
         confirm_text = "overwrite" if existing_date_col else "mark"
         if messagebox.askyesno("Confirm", f"Are you sure you want to {confirm_text} attendance for {subject_name} on {date_str} ({len(absent_rolls)} absentees)?"):
-            success, message = self.mark_attendance(sheet, total_students, absent_rolls, num_hours, date_str, overwrite_col=existing_date_col)
+            success, message = self.mark_attendance(sheet, total_students, absent_rolls, num_hours, date_str, periods=periods_str, overwrite_col=existing_date_col)
             self.show_status(message, not success)
-            if success: [w.delete(0, ctk.END) for w in [self.rolls_entry, self.hours_entry]]
+            if success: [w.delete(0, ctk.END) for w in [self.rolls_entry, self.periods_entry, self.hours_entry]]
 
     def get_all_students_in_workbook(self):
         """Scans every sheet to create a master list of all unique students."""
@@ -714,10 +753,12 @@ class AttendanceApp(ctk.CTk):
         for student_name in student_names_list:
             student_report_parts = [f"Showing summary for student: {student_name.upper()}", "="*40]
             found_student = False
-
+            
             # Scan every sheet for this student
             for sheet in self.wb.worksheets:
-                name_to_row = {str(sheet.cell(row, 2).value or '').upper(): row for row in range(5, count_student_rows(sheet) + 5)}
+                header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+                start_row = header_row + 1
+                name_to_row = {str(sheet.cell(row, 2).value or '').upper(): row for row in range(start_row, count_student_rows(sheet) + start_row)}
                 row_num = name_to_row.get(student_name.upper())
                 
                 if not row_num:
@@ -760,17 +801,18 @@ class AttendanceApp(ctk.CTk):
 
         return "\n\n".join(final_report_parts)
 
-    def mark_attendance(self, sheet, total_students, absent_list, num_hours, attendance_date, overwrite_col=None):
+    def mark_attendance(self, sheet, total_students, absent_list, num_hours, attendance_date, periods="", overwrite_col=None):
         """Final, robust logic for marking attendance with smart column insertion."""
         try:
             green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
             red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
             
             # --- 1. Find the current location of the summary block ---
-            # We use "HOURS PRESENT" in row 4 as a reliable anchor.
+            # We use "HOURS PRESENT" as a reliable anchor.
             summary_start_col = None
+            header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
             for col in range(1, sheet.max_column + 2):
-                if sheet.cell(row=4, column=col).value == "HOURS PRESENT":
+                if sheet.cell(row=header_row, column=col).value == "HOURS PRESENT":
                     summary_start_col = col - 1 # The block starts with TOTAL HOURS
                     break
             
@@ -793,9 +835,16 @@ class AttendanceApp(ctk.CTk):
                     # After inserting, the summary block has moved. We will find it again.
             
             # --- 3. Write the new attendance data ---
+            header_row = 5 if sheet.cell(row=3, column=2).value and "PERIODS" in str(sheet.cell(row=3, column=2).value) else 4
+            periods_row = 3 if header_row == 5 else None # Old file has no periods row
+            hours_row = 4 if header_row == 5 else 3
+            start_row = header_row + 1
+            
             sheet.cell(row=2, column=attendance_col).value = attendance_date
-            sheet.cell(row=3, column=attendance_col).value = num_hours
-            for i in range(5, total_students + 5):
+            if periods_row:
+                sheet.cell(row=periods_row, column=attendance_col).value = periods
+            sheet.cell(row=hours_row, column=attendance_col).value = num_hours
+            for i in range(start_row, total_students + start_row):
                 cell = sheet.cell(row=i, column=attendance_col)
                 if sheet.cell(i, 1).value in absent_list:
                     cell.value, cell.fill = 'A', red_fill
@@ -806,19 +855,19 @@ class AttendanceApp(ctk.CTk):
             # Find the summary columns again, as they might have moved
             current_summary_cols = {}
             for col in range(1, sheet.max_column + 1):
-                header = sheet.cell(row=4, column=col).value
+                header = sheet.cell(row=header_row, column=col).value
                 if header in ["TOTAL HOURS", "HOURS PRESENT", "HOURS ABSENT", "PERCENTAGE"]:
                     current_summary_cols[header] = col
             
             if len(current_summary_cols) < 4:
                  return False, "Summary headers are missing after update."
 
-            for row in range(5, total_students + 5):
+            for row in range(start_row, total_students + start_row):
                 total_hours, present_hours = 0, 0
                 
                 # Loop through all attendance columns (up to the summary block)
                 for col in range(4, current_summary_cols['TOTAL HOURS']): 
-                    session_hours_val = sheet.cell(row=3, column=col).value
+                    session_hours_val = sheet.cell(row=hours_row, column=col).value
                     if session_hours_val:
                         try:
                             session_hours = int(session_hours_val)
@@ -842,22 +891,7 @@ class AttendanceApp(ctk.CTk):
         except PermissionError: return False, f"Could not save. '{self.current_filename}' is open."
         except Exception as e: return False, f"An error occurred: {e}"
 
-    def get_complex_rolls(self, sheet):
-        """Gets a list of all complex roll numbers from column C."""
-        return [str(sheet.cell(row=row, column=3).value) for row in range(5, count_student_rows(sheet) + 5) if sheet.cell(row=row, column=3).value]
 
-    def open_live_session_window(self):
-        """Opens the new Live OTP Session window."""
-        self.hide_status()
-        if not self.wb: return self.show_status("No file loaded.", is_error=True)
-        subject_name = self.subject_combo.get()
-        if not subject_name: return self.show_status("Please select a subject first.", is_error=True)
-        try:
-            sheet = self.wb[subject_name]
-            # Open as a non-singleton window each time
-            LiveSessionWindow(self, sheet)
-        except Exception as e:
-            self.show_status(f"Could not open Live Session: {e}", is_error=True)
 
 if __name__ == "__main__":
     app = AttendanceApp()
